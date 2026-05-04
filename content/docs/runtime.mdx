@@ -1,0 +1,43 @@
+---
+title: Runtime
+description: What the daemon does, and where things live on disk.
+---
+
+The runtime — `ottersd` — is the long-running process that hosts your agents.
+It owns:
+
+- **The agent loop**: tool calls, streaming, retries.
+- **The image store**: pulled and built OCI images live here.
+- **Sessions**: chat history, structured-output captures, log persistence.
+- **Provider config**: where your LLM credentials are kept.
+- **The spawn environment**: locked down so agents never see host secrets.
+
+## Local layout
+
+By default, `ottersd` keeps state under `~/.openotters/`. Inside you'll find:
+
+- `images/` — the local OCI store.
+- `agents/` — per-agent runtime state (sessions, logs, workspaces).
+- `providers.json` — registered LLM providers.
+- `daemon.log` — the daemon's own log.
+
+## Workspaces
+
+Each agent gets a workspace directory it can read and write. The workspace
+contains an auto-generated `WORKSPACE.md` describing the layout, which is fed to
+the agent's system prompt so it knows what's available.
+
+## Surfaces
+
+The same daemon serves both surfaces:
+
+- **TUI**: `otters chat <name>` — terminal-first, full streaming, keyboard-driven.
+- **GUI**: a browser dashboard on the daemon's HTTP port — same agent, same
+  sessions, click-driven.
+
+You can switch surfaces mid-conversation; sessions are shared.
+
+## See also
+
+- **[Agentfile spec](/docs/agentfile)** — what you build into an image.
+- **[CLI reference](/docs/cli)** — what you type at the daemon.

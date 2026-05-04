@@ -1,0 +1,16 @@
+apiVersion: v2
+name: openotters-website
+description: Marketing site and documentation for openotters.io
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://openotters.io
+sources:
+  - https://github.com/openotters/openotters
+maintainers:
+  - name: openotters
+keywords:
+  - openotters
+  - agentfile
+  - ai-agents
+  - website

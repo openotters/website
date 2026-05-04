@@ -1,0 +1,40 @@
+openotters-website {{ .Chart.AppVersion }} has been deployed.
+
+{{- if .Values.ingress.enabled }}
+
+Reach the site at:
+{{- range $host := .Values.ingress.hosts }}
+{{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+{{- end }}
+{{- end }}
+
+{{- else if contains "NodePort" .Values.service.type }}
+
+Get the NodePort URL:
+  export NODE_PORT=$(kubectl get -n {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" svc {{ include "openotters-website.fullname" . }})
+  export NODE_IP=$(kubectl get nodes -n {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+
+{{- else if contains "LoadBalancer" .Values.service.type }}
+
+Wait for the LoadBalancer IP, then:
+  kubectl get svc -n {{ .Release.Namespace }} -w {{ include "openotters-website.fullname" . }}
+
+{{- else }}
+
+Port-forward locally:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "openotters-website.fullname" . }} 8080:{{ .Values.service.port }}
+  open http://127.0.0.1:8080
+
+{{- end }}
+
+{{- if not .Values.github.enabled }}
+
+NOTE: github.enabled=false — the /agents, /binaries and /agentspec pages will
+serve the content baked into the image. To get hourly ISR refreshes from GitHub,
+create a token secret and set github.enabled=true:
+
+  kubectl create secret generic {{ .Values.github.secretName }} \
+    --from-literal={{ .Values.github.secretKey }}=ghp_xxx
+{{- end }}

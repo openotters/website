@@ -1,0 +1,55 @@
+---
+title: Quickstart
+description: Install the daemon, run a demo agent, chat with it — in under a minute.
+---
+
+## 1. Install
+
+With Homebrew:
+
+```sh
+brew install openotters/tap/otters
+brew services start otters
+```
+
+Or with Go:
+
+```sh
+go install github.com/openotters/openotters/cmd/otters@latest
+go install github.com/openotters/openotters/cmd/ottersd@latest
+ottersd serve &
+```
+
+## 2. Configure a provider
+
+```sh
+otters provider add
+```
+
+This walks you through wiring an LLM provider — Anthropic, OpenAI, Ollama, and
+others. The provider config is stored locally; the daemon never round-trips your
+keys to a SaaS.
+
+## 3. Run a demo agent
+
+```sh
+otters run ghcr.io/openotters/agents/pinger:latest --name pinger
+otters chat pinger
+```
+
+That pulls the public image, starts the agent in your daemon, and drops you into
+a chat session.
+
+## 4. One-shot prompts
+
+```console
+$ otters prompt pinger "google.com"
+google.com: reachable
+```
+
+Same agent, different surface — useful in scripts, CI, and pipelines.
+
+## What's next
+
+- **[Build your own agent](/docs/agentfile)** — write an Agentfile, push the image.
+- **[CLI reference](/docs/cli)** — every command in one place.

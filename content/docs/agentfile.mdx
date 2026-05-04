@@ -1,0 +1,73 @@
+---
+title: Agentfile
+description: The declarative grammar for OpenOtters agents.
+---
+
+An Agentfile describes everything an agent needs to run: which model to use, what
+tools it can call, what memory it has, and what its behavior should be.
+
+## A minimal Agentfile
+
+```dockerfile
+FROM scratch
+RUNTIME ghcr.io/openotters/runtime:latest
+MODEL  anthropic/claude-haiku-4-5-20251001
+NAME   pinger
+
+CONTEXT SOUL <<EOF
+You are a connectivity probe. Given a host, call the ping tool
+and reply "<host>: reachable" or "<host>: unreachable (<reason>)".
+EOF
+
+BIN ping ghcr.io/openotters/tools/ping:latest "TCP-port-80 reachability"
+```
+
+Build it, run it:
+
+```sh
+otters run ./Agentfile --name my-pinger
+otters image push ghcr.io/me/my-pinger:v1
+```
+
+## Directives
+
+### `FROM`
+
+Base image to inherit from. `scratch` for a brand-new agent; otherwise an
+existing agent image to extend.
+
+### `RUNTIME`
+
+The runtime image that supplies the agent loop, tool harness, and persistence
+layer. Pinned per agent so upgrades stay deliberate.
+
+### `MODEL`
+
+`<provider>/<model-name>`. The provider must be registered with
+`otters provider add`.
+
+### `NAME`
+
+Default friendly name when the agent is run without `--name`.
+
+### `CONTEXT SOUL`
+
+A heredoc that becomes the agent's system prompt. Keep it specific and
+constrained — the soul is what makes a generic model behave like *your* agent.
+
+### `BIN`
+
+A tool the agent can invoke, as a container image:
+
+```dockerfile
+BIN <name> <image> "<one-line description>"
+```
+
+The description is shown to the model when it picks tools, so write it like a
+function docstring: what it does, what it expects, what it returns.
+
+## The full grammar
+
+The complete spec lives at
+[github.com/openotters/agentfile](https://github.com/openotters/agentfile) and is
+frozen at v1.0 once stabilised.

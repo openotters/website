@@ -1,0 +1,49 @@
+---
+title: CLI reference
+description: The otters command surface, in one page.
+---
+
+```sh
+otters run <ref> --name <name>           # build (if needed) + start
+otters ls                                # list agents
+otters chat | prompt <name>              # talk to an agent
+otters stop | start | rm <name>          # lifecycle
+otters logs <name>                       # tail runtime log
+otters provider add | ls | rm            # LLM providers
+otters image build | push | pull | ls    # agent images
+otters bin ls                            # available BIN tools
+otters info                              # daemon status
+```
+
+Run `otters <cmd> --help` for full flags and examples.
+
+## Lifecycle commands
+
+### `otters run <ref>`
+
+Builds the agent (if `<ref>` is a path to an Agentfile or directory) or pulls it
+(if it's an image reference), then starts it under the daemon.
+
+### `otters chat <name>` / `otters prompt <name> "..."`
+
+Two surfaces for the same agent. `chat` is interactive; `prompt` is one-shot and
+streams to stdout — useful in pipelines.
+
+### `otters stop | start | rm <name>`
+
+Stop a running agent, restart a stopped one, or delete it entirely.
+
+## Image commands
+
+### `otters image build`
+
+Build an Agentfile into an OCI image stored in the local image store.
+
+### `otters image push <ref>`
+
+Push an image to a remote registry. Any OCI-compliant registry works — GHCR,
+Docker Hub, ECR, self-hosted.
+
+### `otters image pull <ref>`
+
+Pull an image from a remote registry into the local store.

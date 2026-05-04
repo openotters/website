@@ -1,0 +1,28 @@
+---
+title: Welcome
+description: Declarative AI agents — like Docker, but for autonomous agents.
+---
+
+OpenOtters lets you describe an agent in an `Agentfile`, build it into an OCI image,
+and run it. Runtime, tools, memory, sessions, and persistence are handled for you.
+**No code or SDK required** — both remain available when you need to extend the
+runtime, plug in a custom executor, or embed agents in another Go program.
+
+> ⚠️ Early alpha — APIs and on-disk state can change without notice.
+
+## Where to start
+
+- **[Quickstart](/docs/quickstart)** — install the daemon, run a demo agent, chat with it.
+- **[Agentfile spec](/docs/agentfile)** — every directive, with examples.
+- **[CLI reference](/docs/cli)** — the `otters` command surface.
+- **[Runtime](/docs/runtime)** — what the daemon does, where things live on disk.
+
+## Why declarative?
+
+Today, building an agent means picking an SDK, writing glue code, wiring up tools
+one by one, and re-deploying when anything changes. OpenOtters trades that for a
+single declarative file: pick a model, give it a soul, bind tools as containers.
+
+The same artifact runs locally, in CI, or on a hosted daemon — the way Docker
+images do. You can push agents to any OCI registry, pull them on another machine,
+and `otters run` them with no further setup.

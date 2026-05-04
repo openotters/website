@@ -1,0 +1,13 @@
+.git
+.github
+.next
+.source
+node_modules
+helm
+*.log
+.DS_Store
+.env
+.env.*
+.vscode
+.idea
+README.md
