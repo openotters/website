@@ -4,10 +4,8 @@ import {
 	Cpu,
 	FileCode2,
 	Github,
-	Layers,
 	Lock,
 	MessageSquare,
-	Network,
 	ShieldCheck,
 	Terminal,
 	Workflow,
@@ -20,6 +18,7 @@ import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { CopyCommand } from "@/components/ui/copy-command"
 import { OtterMark } from "@/components/ui/logo"
 import { TerminalWindow } from "@/components/ui/terminal-window"
+import { type Package, imageRef, listPackages, shortName } from "@/lib/ghcr"
 
 const AGENTFILE = `FROM scratch
 RUNTIME ghcr.io/openotters/runtime:latest
@@ -67,32 +66,7 @@ const FEATURES = [
 	},
 ] as const
 
-const AGENTS = [
-	{
-		name: "pinger",
-		image: "ghcr.io/openotters/agents/pinger",
-		desc: "TCP-port-80 reachability probe",
-		icon: Network,
-	},
-	{
-		name: "reader",
-		image: "ghcr.io/openotters/agents/reader",
-		desc: "Fetch a URL via Jina Reader, summarise it",
-		icon: Layers,
-	},
-	{
-		name: "meteo",
-		image: "ghcr.io/openotters/agents/meteo",
-		desc: "Weather lookup using Open-Meteo + jq",
-		icon: Cpu,
-	},
-	{
-		name: "greeting",
-		image: "ghcr.io/openotters/agents/greeting",
-		desc: "Warm replies returned as strict JSON",
-		icon: MessageSquare,
-	},
-] as const
+const HOME_AGENT_LIMIT = 4
 
 export function Home() {
 	return (
@@ -260,7 +234,7 @@ function Snippet() {
 						className="-inset-4 absolute rounded-2xl bg-gradient-to-br from-primary/30 via-primary/5 to-transparent blur-2xl"
 					/>
 					<TerminalWindow className="relative" title="Agentfile">
-						<pre className="overflow-x-auto p-5 font-mono text-foreground text-sm leading-relaxed">
+						<pre className="whitespace-pre-wrap break-words p-5 font-mono text-foreground text-sm leading-relaxed">
 							<code>{AGENTFILE}</code>
 						</pre>
 					</TerminalWindow>
@@ -270,59 +244,86 @@ function Snippet() {
 	)
 }
 
-function Agents() {
+async function Agents() {
+	const { agents } = await listPackages()
+	const latest = [...agents]
+		.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
+		.slice(0, HOME_AGENT_LIMIT)
+	const hasMore = agents.length > latest.length
+
 	return (
 		<section className="border-border/60 border-y bg-muted/30">
 			<div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-				<div className="flex flex-col items-end justify-between gap-6 md:flex-row">
-					<div className="max-w-xl">
-						<Badge className="mb-4" variant="outline">
-							Public registry
-						</Badge>
-						<h2 className="font-bold text-3xl text-foreground tracking-tight sm:text-4xl">
-							Pull and run, no clone needed
-						</h2>
-						<p className="mt-4 text-lg text-muted-foreground">
-							Demo agents live on GHCR. One command and they&apos;re running in
-							your daemon.
-						</p>
-					</div>
-					<Button asChild variant="outline">
-						<a
-							href="https://github.com/orgs/openotters/packages"
-							rel="noopener noreferrer"
-							target="_blank">
-							Browse the registry <ArrowRight className="size-4" />
-						</a>
-					</Button>
+				<div className="max-w-xl">
+					<Badge className="mb-4" variant="outline">
+						Public registry · ghcr.io/openotters
+					</Badge>
+					<h2 className="font-bold text-3xl text-foreground tracking-tight sm:text-4xl">
+						Pull and run, no clone needed
+					</h2>
+					<p className="mt-4 text-lg text-muted-foreground">
+						Demo agents live on GHCR. One command and they&apos;re running in
+						your daemon.
+					</p>
 				</div>
 
-				<ul className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-					{AGENTS.map((agent) => (
-						<li key={agent.name}>
-							<Card className="h-full transition-colors hover:border-primary/40">
-								<CardContent className="flex flex-col gap-3">
-									<div className="flex items-center gap-3">
-										<div className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary">
-											<agent.icon className="size-4" />
-										</div>
-										<span className="font-mono font-semibold text-base text-foreground">
-											{agent.name}
-										</span>
-									</div>
-									<p className="text-muted-foreground text-sm">{agent.desc}</p>
-								</CardContent>
-								<CardFooter className="mt-auto">
-									<code className="truncate text-muted-foreground text-xs">
-										{agent.image}:latest
-									</code>
-								</CardFooter>
-							</Card>
-						</li>
-					))}
-				</ul>
+				{latest.length === 0 ? (
+					<p className="mt-12 text-muted-foreground text-sm">
+						No agents published yet — check back soon.
+					</p>
+				) : (
+					<ul className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+						{latest.map((agent) => (
+							<li key={agent.name}>
+								<AgentCard agent={agent} />
+							</li>
+						))}
+					</ul>
+				)}
+
+				<div className="mt-10 flex justify-center">
+					<Button asChild size="lg" variant="outline">
+						<Link href="/agents">
+							{hasMore
+								? `More agents (${agents.length}) `
+								: "All agents "}
+							<ArrowRight className="size-4" />
+						</Link>
+					</Button>
+				</div>
 			</div>
 		</section>
+	)
+}
+
+function AgentCard({ agent }: { agent: Package }) {
+	return (
+		<a
+			className="block h-full"
+			href={agent.htmlUrl}
+			rel="noopener noreferrer"
+			target="_blank">
+			<Card className="h-full transition-colors hover:border-primary/40">
+				<CardContent className="flex flex-col gap-3">
+					<div className="flex items-center gap-3">
+						<div className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-lg">
+							<span aria-hidden="true">🦦</span>
+						</div>
+						<span className="truncate font-mono font-semibold text-base text-foreground">
+							{shortName(agent.name)}
+						</span>
+					</div>
+					<p className="text-muted-foreground text-sm">
+						OCI image · pull-ready
+					</p>
+				</CardContent>
+				<CardFooter className="mt-auto">
+					<code className="truncate text-muted-foreground text-xs">
+						{imageRef(agent.name)}
+					</code>
+				</CardFooter>
+			</Card>
+		</a>
 	)
 }
 
