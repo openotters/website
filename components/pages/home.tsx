@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { CopyCommand } from "@/components/ui/copy-command"
 import { OtterMark } from "@/components/ui/logo"
+import { TerminalWindow } from "@/components/ui/terminal-window"
 
 const AGENTFILE = `FROM scratch
 RUNTIME ghcr.io/openotters/runtime:latest
@@ -258,9 +259,11 @@ function Snippet() {
 						aria-hidden="true"
 						className="-inset-4 absolute rounded-2xl bg-gradient-to-br from-primary/30 via-primary/5 to-transparent blur-2xl"
 					/>
-					<pre className="relative overflow-x-auto rounded-xl border border-border bg-card p-5 font-mono text-foreground text-sm shadow-lg">
-						<code>{AGENTFILE}</code>
-					</pre>
+					<TerminalWindow className="relative" title="Agentfile">
+						<pre className="overflow-x-auto p-5 font-mono text-foreground text-sm leading-relaxed">
+							<code>{AGENTFILE}</code>
+						</pre>
+					</TerminalWindow>
 				</div>
 			</div>
 		</section>
