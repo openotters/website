@@ -25,6 +25,11 @@ const groups: { heading: string; links: { href: string; label: string; external?
 		heading: "Community",
 		links: [
 			{
+				href: "https://join.slack.com/t/openotters/shared_invite/zt-3xddg51j9-I3sg4dyzt5kFS0A5~k_elQ",
+				label: "Slack",
+				external: true,
+			},
+			{
 				href: "https://github.com/openotters/openotters",
 				label: "GitHub",
 				external: true,
