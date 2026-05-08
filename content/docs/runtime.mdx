@@ -14,12 +14,95 @@ It owns:
 
 ## Local layout
 
-By default, `ottersd` keeps state under `~/.openotters/`. Inside you'll find:
+By default, `ottersd` keeps state under `~/.otters/`. Inside you'll find:
 
-- `images/` — the local OCI store.
-- `agents/` — per-agent runtime state (sessions, logs, workspaces).
-- `providers.json` — registered LLM providers.
-- `daemon.log` — the daemon's own log.
+- `agents/` — per-agent runtime state (workspaces, agent.yaml).
+- `logs/` — per-agent runtime logs (one file per agent UUID).
+- `providers.yaml` — registered LLM providers (created by `otters provider add`).
+- `daemon.db` — SQLite state store (running agents, sessions, mounts).
+- `registry/` — the embedded OCI store. **System executor only** — the
+  Docker executor uses Docker's image store instead and `registry/` is
+  not created.
+
+## Configuration
+
+`ottersd serve` reads YAML configuration on startup and merges it with CLI flags
+and environment variables. Precedence (highest first):
+
+1. CLI flag (`--executor docker`)
+2. Environment variable (`OTTERSD_EXECUTOR=docker`)
+3. YAML config file
+4. Built-in default
+
+### Config file locations
+
+`ottersd` looks for config in this order — first match wins:
+
+1. `--config` / `-c` flag (any path you supply)
+2. `~/.otters/ottersd.yaml` (user-scoped — same directory as the daemon's
+   other state: `agents/`, `logs/`, `providers.yaml`, `daemon.db`)
+3. `/etc/otters/ottersd.yaml` (host-scoped, e.g. for systemd-managed daemons)
+
+Every `serve` flag has a matching YAML key — kebab-case becomes nested keys
+under the `serve:` subcommand. Run `ottersd serve --help` for the full list.
+
+### Picking an executor backend
+
+`ottersd` ships two executor backends:
+
+- **`system`** (default) — each agent runs as a host subprocess. Works on any
+  platform; the runtime + every BIN tool is materialised onto local disk under
+  `~/.openotters/agents/<id>`.
+- **`docker`** — each agent runs in its own container. The runtime + every BIN
+  image is mounted via OCI image-mount (read-only); only the agent workspace
+  is bind-mounted as the writable surface. Storage moves into Docker's image
+  store — no embedded oras registry.
+
+The `docker` backend requires:
+
+- Docker Engine **≥ 28.0** (image-mount type stabilised here)
+- The **containerd snapshotter** enabled
+  (`{"features":{"containerd-snapshotter":true}}` in `daemon.json`)
+
+`ottersd` probes both at startup and refuses to boot with a clear error when
+either is missing.
+
+### Example: `~/.otters/ottersd.yaml`
+
+```yaml
+serve:
+  # Backend: 'system' (default) or 'docker'.
+  executor: docker
+
+  # Optional: pin the unix socket / TCP listener / data paths.
+  socket-path: /var/run/ottersd.sock
+  http-addr: 127.0.0.1:5000
+  no-ui: false
+
+  # Pool tuning — defaults shown for context.
+  max-concurrent: 10
+  backoff-base: 1s
+  backoff-cap: 30s
+  shutdown-timeout: 5s
+```
+
+The same settings via env vars (e.g. for a systemd unit or a Colima
+post-start hook):
+
+```bash
+export OTTERSD_EXECUTOR=docker
+export OTTERSD_HTTP_ADDR=127.0.0.1:5000
+ottersd serve
+```
+
+Or one-shot at the CLI:
+
+```bash
+ottersd serve --executor docker
+```
+
+`otters info` reports the active backend so you can confirm which one is in
+effect after a restart.
 
 ## Workspaces
 
