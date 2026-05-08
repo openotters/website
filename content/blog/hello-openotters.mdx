@@ -1,0 +1,50 @@
+---
+title: Hello, OpenOtters
+description: A short note on what OpenOtters is, why it exists, and where the project goes next.
+date: 2026-05-08
+author: openotters
+---
+
+OpenOtters is a declarative way to build, ship, and run AI agents — the way
+Docker is for containers. You write an `Agentfile`, build it into an OCI
+image, and run it. The runtime handles streaming, memory, sessions, tools,
+and persistence. No SDK. No glue code.
+
+This is the project's first blog post. We'll use this space to share release
+notes, design decisions, and the reasoning behind the bigger trade-offs as
+they land.
+
+## Why a declarative format
+
+Building an agent today usually means picking an SDK, writing the glue
+between a model, a memory store, and a handful of tools, and re-deploying
+every time any of that changes. That works — but it's a long way from how
+the rest of the platform works. Containers don't ask you to write a Go
+program to define them; you write a `Dockerfile`.
+
+An `Agentfile` is the same idea applied to agents. Pick a model, give it a
+soul (the system prompt), bind tools as container images. The runtime takes
+care of the rest. The same artifact runs locally, in CI, or on a hosted
+daemon — pull it from any OCI registry and `otters run` it.
+
+## Join the conversation
+
+We just opened a Slack workspace for everyone who wants to discuss the
+spec, contribute tools, or just see where the project is heading.
+
+[Join the OpenOtters Slack →](https://join.slack.com/t/openotters/shared_invite/zt-3xddg51j9-I3sg4dyzt5kFS0A5~k_elQ)
+
+If you'd rather stay on GitHub, the
+[discussions tab](https://github.com/openotters/openotters/discussions) is
+the other place we hang out.
+
+## What's next
+
+Short list of things on deck:
+
+- A stable `Agentfile` v1 spec with an explicit deprecation policy.
+- More demo agents on `ghcr.io/openotters` — beyond the connectivity probe.
+- Documenting the runtime's spawn environment and security posture.
+
+If any of that sounds interesting, the Slack link above is the fastest way
+in. Otherwise — `brew install openotters/tap/otters` and have a play.

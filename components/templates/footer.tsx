@@ -10,6 +10,7 @@ const groups: { heading: string; links: { href: string; label: string; external?
 			{ href: "/binaries", label: "Binaries" },
 			{ href: "/agentspec", label: "Agentspec" },
 			{ href: "/docs", label: "Docs" },
+			{ href: "/blog", label: "Blog" },
 		],
 	},
 	{

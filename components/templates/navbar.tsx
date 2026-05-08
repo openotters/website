@@ -15,6 +15,7 @@ const links = [
 	{ href: "/binaries", label: "Binaries" },
 	{ href: "/agentspec", label: "Agentspec" },
 	{ href: "/docs", label: "Docs" },
+	{ href: "/blog", label: "Blog" },
 ]
 
 export function Navbar() {
