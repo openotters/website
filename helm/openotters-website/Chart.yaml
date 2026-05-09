@@ -2,8 +2,8 @@ apiVersion: v2
 name: openotters-website
 description: Marketing site and documentation for openotters.io
 type: application
-version: 0.1.0-alpha.6
-appVersion: "0.1.0-alpha.6"
+version: 0.1.0-alpha.7
+appVersion: "0.1.0-alpha.7"
 home: https://openotters.io
 sources:
   - https://github.com/openotters/openotters
