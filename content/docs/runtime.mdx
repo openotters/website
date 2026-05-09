@@ -11,6 +11,10 @@ It owns:
 - **Sessions**: chat history, structured-output captures, log persistence.
 - **Provider config**: where your LLM credentials are kept.
 - **The spawn environment**: locked down so agents never see host secrets.
+  An Agentfile can opt in to extra OS env vars via the
+  [`ENV`](/docs/agentfile#env) instruction; reserved keys (PATH, HOME,
+  XDG_*, TMPDIR, LANG, OTTERS_AGENT_ROOT, *_API_KEY, *_API_BASE) are
+  rejected at build time so the sandbox stays intact.
 
 ## Local layout
 

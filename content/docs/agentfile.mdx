@@ -66,6 +66,30 @@ BIN <name> <image> "<one-line description>"
 The description is shown to the model when it picks tools, so write it like a
 function docstring: what it does, what it expects, what it returns.
 
+### `ENV`
+
+OS environment variables set on the spawned agent process. Use this for
+application-level knobs the agent (or its tools) read via `os.Getenv` —
+`NODE_ENV`, `LOG_LEVEL`, `FEATURE_X`, third-party SDK config, etc.
+
+```dockerfile
+ENV <KEY>=<value> "<optional description>"
+```
+
+Keys must be uppercase POSIX-style names (`^[A-Z_][A-Z0-9_]*$`). The
+following are reserved and **rejected at build time** so the
+locked-down agent env stays intact:
+
+- `PATH`, `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`,
+  `TMPDIR`, `LANG`, `OTTERS_AGENT_ROOT`
+- Any key ending in `_API_KEY` or `_API_BASE` (those travel through the
+  provider-credential channel — declare a provider model instead)
+
+`ENV` is **not** the same as [`CONFIG`](#config). `CONFIG` is a runtime
+knob the agent program reads via the runtime SDK; `ENV` lands directly
+on the spawned process's environment. Use `ENV` for OS-level
+integration, `CONFIG` for behaviour you want surfaced to the LLM.
+
 ## The full grammar
 
 The complete spec lives at
