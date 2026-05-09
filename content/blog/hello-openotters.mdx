@@ -5,46 +5,36 @@ date: 2026-05-01
 author: openotters
 ---
 
-OpenOtters is a declarative way to build, ship, and run AI agents — the way
-Docker is for containers. You write an `Agentfile`, build it into an OCI
-image, and run it. The runtime handles streaming, memory, sessions, tools,
-and persistence. No SDK. No glue code.
+![Three panels: someone working at a laptop, then meeting an otter, then surrounded by a small, very enthusiastic crowd of otters.](/blog/hello-openotters.png)
 
-This is the project's first blog post. We'll use this space to share release
-notes, design decisions, and the reasoning behind the bigger trade-offs as
-they land.
+So this is the first post on the OpenOtters blog. Hi.
 
-## Why a declarative format
+I've been wanting to write this up for a while and kept putting it off, mostly because I wasn't sure what the first post should be. In the end I decided it should be a small one. A "we exist, here is the door, please come in" kind of post.
 
-Building an agent today usually means picking an SDK, writing the glue
-between a model, a memory store, and a handful of tools, and re-deploying
-every time any of that changes. That works — but it's a long way from how
-the rest of the platform works. Containers don't ask you to write a Go
-program to define them; you write a `Dockerfile`.
+OpenOtters is a way to build, ship, and run AI agents the same way you ship a container. You write an `Agentfile`, you build it into an OCI image, you run it. The runtime takes care of streaming, memory, sessions, tools, persistence, all that. There's no SDK to learn (you can still drop down to Go if you want, we just don't think you should have to most of the time).
 
-An `Agentfile` is the same idea applied to agents. Pick a model, give it a
-soul (the system prompt), bind tools as container images. The runtime takes
-care of the rest. The same artifact runs locally, in CI, or on a hosted
-daemon — pull it from any OCI registry and `otters run` it.
+The plan for this blog is pretty loose. Release notes when we cut a release. Design notes when something interesting lands. The occasional rant about why a particular trade-off looked the way it did at the time. We'll see.
 
-## Join the conversation
+## Why declarative
 
-We just opened a Slack workspace for everyone who wants to discuss the
-spec, contribute tools, or just see where the project is heading.
+The honest reason is that building an agent today still feels like building a small bespoke service every time. You pick an SDK. You wire up a model. You wire up some tools. Then memory. Then redeploy when any of that changes. It works, sure, but it's a long way from how the rest of the stack feels in 2026.
 
-[Join the OpenOtters Slack →](https://join.slack.com/t/openotters/shared_invite/zt-3xddg51j9-I3sg4dyzt5kFS0A5~k_elQ)
+Containers don't make you write Go to define them. You write a `Dockerfile`. An `Agentfile` is the same idea, applied to agents. Pick a model. Give it a soul (we settled on that word and we're keeping it). Bind a few tools as container images. Done.
 
-If you'd rather stay on GitHub, the
-[discussions tab](https://github.com/openotters/openotters/discussions) is
-the other place we hang out.
+The same artifact runs locally, runs in CI, runs on a hosted daemon. Push it to a registry, pull it on another machine, `otters run` it. Boring on purpose.
+
+## Come hang out
+
+We just opened a Slack workspace. It's quiet right now, which honestly is sort of nice. If you want to talk about the spec, contribute a tool, ask a question, or just lurk, the door is open: [Join the OpenOtters Slack](https://join.slack.com/t/openotters/shared_invite/zt-3xddg51j9-I3sg4dyzt5kFS0A5~k_elQ).
+
+GitHub [discussions](https://github.com/openotters/openotters/discussions) is the other place we hang out, mostly for things that should stay searchable.
 
 ## What's next
 
-Short list of things on deck:
+A few things on deck, in roughly the order I'd bet on them landing:
 
-- A stable `Agentfile` v1 spec with an explicit deprecation policy.
-- More demo agents on `ghcr.io/openotters` — beyond the connectivity probe.
-- Documenting the runtime's spawn environment and security posture.
+A stable `Agentfile` v1 with a real deprecation policy. More demo agents on `ghcr.io/openotters` (the connectivity probe is a placeholder, not a flagship). Better docs around the spawn environment, and a clearer story about what the runtime actually guarantees you when something misbehaves at 3am.
 
-If any of that sounds interesting, the Slack link above is the fastest way
-in. Otherwise — `brew install openotters/tap/otters` and have a play.
+If any of that sounds interesting, the Slack link above is the fastest way in. Otherwise, `brew install openotters/tap/otters`, kick the tires, file the bug.
+
+See you around.

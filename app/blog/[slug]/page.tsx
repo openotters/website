@@ -54,7 +54,7 @@ export default async function BlogPostPage({ params }: PageProps) {
 				)}
 			</header>
 
-			<div className="prose prose-neutral dark:prose-invert max-w-none">
+			<div className="prose-otters">
 				<MDX components={getMDXComponents()} />
 			</div>
 		</article>
