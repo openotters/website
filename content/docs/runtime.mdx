@@ -80,7 +80,7 @@ serve:
 
   # Optional: pin the unix socket / TCP listener / data paths.
   socket-path: /var/run/ottersd.sock
-  http-addr: 127.0.0.1:5000
+  http-addr: 127.0.0.1:5500
   no-ui: false
 
   # Pool tuning — defaults shown for context.
@@ -95,7 +95,7 @@ post-start hook):
 
 ```bash
 export OTTERSD_EXECUTOR=docker
-export OTTERSD_HTTP_ADDR=127.0.0.1:5000
+export OTTERSD_HTTP_ADDR=127.0.0.1:5500
 ottersd serve
 ```
 
