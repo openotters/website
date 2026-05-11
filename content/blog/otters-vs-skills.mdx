@@ -1,0 +1,95 @@
+---
+title: Otters vs Skills
+description: Where OpenOtters fits next to Anthropic's Skills.
+date: 2026-05-06
+author: openotters
+---
+
+![Three panels: a developer at a kitchen counter holding a single blank index card, then a kitchen-on-wheels rolling in pushed by otters, then everyone cooking together with the card pinned to the fridge.](/blog/otters-vs-skills.png)
+
+Since [Skills](https://www.anthropic.com/news/skills) shipped, the question I
+keep getting is some flavor of "isn't that the same thing as OpenOtters?"
+
+Short answer: no, but I get why people ask. Long answer below.
+
+## What a Skill is
+
+A Skill is a folder. You put a `SKILL.md` in it, plus whatever reference files
+make sense, and Claude reads it at the start of a conversation. Now Claude
+knows your invoice format, your incident playbook, the way your team labels
+PRs, whatever you wrote down.
+
+It's a good shape for a narrow problem. Drop in a markdown file, point Claude
+at it, you're done by lunch. No daemon, no registry, no container packaging.
+
+The constraint is part of the shape though. A Skill is Claude's understanding
+of your procedure, running inside whichever client you happen to be in. It
+runs when you're chatting. It doesn't run on a server you own. There's no
+lifecycle to speak of. It can't kick off a job and come back to it later.
+
+That's not a complaint, it's just what the thing is.
+
+## What an Otter is
+
+An OpenOtters agent is a thing you deploy. You write an `Agentfile`, you build
+it into an OCI image, you push it to a registry, you run it. Each tool the
+agent uses is a separately-built BIN image. Same packaging story as Docker.
+
+<Agentfile>
+{`FROM scratch
+RUNTIME ghcr.io/openotters/runtime:latest
+MODEL anthropic/claude-haiku-4-5-20251001
+NAME triage
+
+CONTEXT SOUL <<EOF
+You triage incoming GitHub issues for repo X. For each issue
+you look at, you add a triage label, suggest a milestone, and
+post one comment summarising what you saw. You don't close
+issues without an explicit ask. You don't tag people.
+EOF
+
+BIN gh ghcr.io/openotters/tools/gh:latest "GitHub CLI"
+BIN jq ghcr.io/openotters/tools/jq:latest "JSON filter"
+BIN sh ghcr.io/openotters/tools/sh:latest "Compose pipelines"`}
+</Agentfile>
+
+That's the whole declaration. `otters image build`, push it somewhere, and now
+you've got a portable agent. Runs under a daemon on your laptop, on a CI
+runner, on a server. It has a chat surface (terminal and browser), persistent
+sessions, async jobs that keep going while you walk away. The `gh` you see
+above isn't a description of what `gh` does, it's a real static `gh` binary,
+mounted into the agent's sandbox, with a content-addressed digest you can
+audit.
+
+## Different layers, basically
+
+Honest framing: they sit at different layers of the same idea.
+
+Skills are knowledge you layer into a chat that someone else operates. You're
+using Anthropic's inference, Anthropic's tool harness, Anthropic's session
+model. What you bring to the table is the procedure.
+
+OpenOtters is a runtime you operate yourself. You pick the model, the tool
+set, the persistence story, the auth surface, the lifecycle. The procedure is
+one piece of that, not the whole thing.
+
+If your problem starts and ends with "Claude needs to know how we do X here",
+Skills are the shorter path and you should take it. Genuinely. Use the easier
+tool.
+
+If your problem looks more like "I need something running unattended on a box
+I control, doing real work against real systems, that I can ship around like
+any other artifact"... that's where Otters lives.
+
+## They play nice together
+
+There's no rule against using both, by the way. A Skill can describe how to
+talk to one of your OpenOtters agents. A BIN tool from OpenOtters can show up
+in a Skill's reference set as "this is what `gh` does in our pipeline." Same
+problem space, two layers, the boundary holds.
+
+If you were picking one because you thought the other made it redundant: it
+doesn't. Use whichever layer matches the problem you actually have.
+
+`brew install openotters/tap/otters` if you want to poke at it. Slack
+[here](https://join.slack.com/t/openotters/shared_invite/zt-3xddg51j9-I3sg4dyzt5kFS0A5~k_elQ).
