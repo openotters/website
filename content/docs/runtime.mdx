@@ -111,18 +111,86 @@ effect after a restart.
 ## Workspaces
 
 Each agent gets a workspace directory it can read and write. The workspace
-contains an auto-generated `WORKSPACE.md` describing the layout, which is fed to
-the agent's system prompt so it knows what's available.
+contains auto-generated context files the runtime feeds to the agent's
+system prompt so it knows what's available:
+
+- **`AGENT.md`** — the agent's declared bins, environment, and a positive
+  Capabilities section (network, persistent memory, async jobs, persistent
+  workspace) plus a strict Binaries-allowlist directive. Together these stop
+  the model from hallucinating either missing tools or absent capabilities.
+- **`WORKSPACE.md`** — the FHS-style layout of the workspace tree, with
+  absolute paths the model uses verbatim in tool calls.
+- **`MOUNTS.md`** — present only when the agent was started with
+  `otters run -v HOST:TARGET[:DESC][:ro|rw]` mounts; surfaces the bind-mount
+  target paths so the model knows what host data is exposed and which
+  paths are read-only.
+- One file per `CONTEXT` heredoc declared in the Agentfile
+  (`SOUL.md`, `SCENARIOS.md`, `IDENTITY.md`, …).
+
+## Tools
+
+Tools are OCI images declared as `BIN` directives in the Agentfile. The
+runtime mounts each one read-only into the agent's environment and registers
+it with the LLM. A BIN image can carry a `USAGE.md` blob (baked at build time
+by `otters bin build -u …`); the runtime surfaces it under the tool's
+model-facing description as a `## Usage` section, so the model gets long-form
+docs without you re-stating them in every Agentfile.
+
+The canonical tool image set lives at
+[`ghcr.io/openotters/tools/*`](https://github.com/orgs/openotters/packages):
+`curl`, `jq`, `sh`, `wget`, `kubectl`, `gh`, `helm`, `crane`, `yq`, `yaegi`,
+`pandoc`, `fd`, `rg`, and the small coreutils set (`cat`, `ls`, `find`, …).
+
+## Async jobs
+
+The runtime ships with built-in tools for long-running background work,
+auto-registered when the daemon URL + an agent token are present in the
+spawn env:
+
+- `job_submit({"bin":"…", "args":[…], "stdin":"…"})` — dispatches a BIN
+  against the agent's environment, returns a `job_id` immediately.
+- `job_list({})` — lists jobs in the current chat session (auto-scoped
+  via the `io.openotters.session-id` label).
+- `job_status({"job_id":"…"})` — non-blocking snapshot.
+- `job_wait({"job_id":"…"})` — blocks until terminal; if the agent's
+  turn is interrupted, the job is auto-cancelled.
+- `job_watch({"job_id":"…"})` — same wait semantics but returns *only*
+  stdout, and the underlying job keeps running on disconnect.
+- `job_cancel({"job_id":"…"})` — SIGKILLs the in-flight BIN; captured
+  stdout/stderr up to the kill point are preserved.
+
+Stdout / stderr stream into SQLite every ~200 ms while the BIN runs, so
+the dashboard's `/jobs/<id>` page and the chat's inline log panel both
+render live progress without the agent stalling.
+
+## Sessions
+
+Every conversation has a stable session id used as the URL slug and as
+the `io.openotters.session-id` label on every async job the agent spawns
+during the chat. The convention is:
+
+- `cli:chat:<uuid>` — minted by `otters chat <name>`
+- `gui:chat:<uuid>` — minted by the dashboard's "New session" button
+
+The shared label namespace makes `otters jobs ls` filter cleanly across
+both surfaces.
 
 ## Surfaces
 
-The same daemon serves both surfaces:
+The same daemon serves three surfaces. You can switch between them
+mid-conversation; sessions are shared.
 
-- **TUI**: `otters chat <name>` — terminal-first, full streaming, keyboard-driven.
-- **GUI**: a browser dashboard on the daemon's HTTP port — same agent, same
-  sessions, click-driven.
-
-You can switch surfaces mid-conversation; sessions are shared.
+- **TUI**: `otters chat <name>` — terminal-first, full streaming,
+  keyboard-driven, with slash commands (`/jobs`, `/job`, `/cancel`)
+  and a bottom-bar strip of running jobs.
+- **GUI**: a browser dashboard on the daemon's HTTP port —
+  agent dashboard with stats + recent activity, image catalog with a
+  run-from-image dialog (override `MODEL` + every `ENV`), live log
+  streaming on `/jobs/<id>`, chat with inline tool calls and live
+  job-log previews.
+- **Programmatic**: each surface is a thin client over the daemon's
+  Connect/gRPC API. Drop in `pkg/agent` (runtime SDK) or talk to
+  the API directly when embedding agents in another Go program.
 
 ## See also
 

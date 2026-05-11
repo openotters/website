@@ -49,6 +49,21 @@ google.com: reachable
 
 Same agent, different surface — useful in scripts, CI, and pipelines.
 
+## 5. Open the dashboard
+
+The daemon ships a browser UI on the same port. `otters info` prints
+the URL (default `http://127.0.0.1:5500`). The dashboard lets you:
+
+- Browse the **image catalog** and launch an agent with `MODEL` + every
+  `ENV` overridable in one dialog — no Agentfile edit required.
+- Watch **async jobs** stream live stdout / stderr on `/jobs/<id>`.
+- Chat with any agent (sessions are shared with the CLI — start in
+  the TUI, finish in the GUI, or vice versa).
+
+Agents that need configuration (auth tokens, base URLs) are easiest to
+spin up from the dashboard: pick the image card, hit **Run**, fill the
+`ENV` overrides in the dialog, and you're chatting.
+
 ## What's next
 
 - **[Build your own agent](/docs/agentfile)** — write an Agentfile, push the image.

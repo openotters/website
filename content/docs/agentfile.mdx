@@ -25,8 +25,8 @@ BIN ping ghcr.io/openotters/tools/ping:latest "TCP-port-80 reachability"
 Build it, run it:
 
 ```sh
-otters run ./Agentfile --name my-pinger
-otters image push ghcr.io/me/my-pinger:v1
+otters image build ./Agentfile -t ghcr.io/me/my-pinger:v1
+otters run ghcr.io/me/my-pinger:v1 --name my-pinger
 ```
 
 ## Directives
@@ -44,16 +44,32 @@ layer. Pinned per agent so upgrades stay deliberate.
 ### `MODEL`
 
 `<provider>/<model-name>`. The provider must be registered with
-`otters provider add`.
+`otters provider add`. The model can be overridden at run time — either via
+`otters run --model ...` or via the GUI's run-from-image dialog.
 
 ### `NAME`
 
 Default friendly name when the agent is run without `--name`.
 
-### `CONTEXT SOUL`
+### `CONTEXT`
 
-A heredoc that becomes the agent's system prompt. Keep it specific and
-constrained — the soul is what makes a generic model behave like *your* agent.
+A heredoc whose content becomes one section of the agent's system prompt. The
+common form names the section, giving the LLM a reading order:
+
+```dockerfile
+CONTEXT SOUL <<EOF
+You are a connectivity probe…
+EOF
+
+CONTEXT SCENARIOS "Common shapes the user brings" <<EOF
+- "is X up?" → ping X
+- "round-trip time?" → ping -c 3 X
+EOF
+```
+
+The optional quoted description renders as a sub-header above the body. Pick
+short, capitalised section names (`SOUL`, `SCENARIOS`, `IDENTITY`,
+`POLICIES` …) so the model can refer to them.
 
 ### `BIN`
 
@@ -64,7 +80,25 @@ BIN <name> <image> "<one-line description>"
 ```
 
 The description is shown to the model when it picks tools, so write it like a
-function docstring: what it does, what it expects, what it returns.
+function docstring: what it does, what it expects, what it returns. A longer
+USAGE block can follow as a heredoc:
+
+```dockerfile
+BIN curl ghcr.io/openotters/tools/curl:latest "HTTP client" <<EOF
+Pass curl(1) flags as args. Common shape:
+  -X POST                   method override
+  -H "name: value"          header (repeatable)
+  -d "<json>"               request body
+  -sS                       silent progress, still surface errors
+URL is the last positional arg. Wrap in sh -c when chaining with jq.
+EOF
+```
+
+If the BIN image itself carries a `USAGE.md` (baked at build time by
+`otters bin build -u …`), the runtime appends it under a `## Usage`
+section in the tool's model-facing description. The `vnd.openotters.bin.usage`
+manifest annotation drives this — declare your own BINs with a USAGE.md and
+agents pick the docs up without you re-stating them in the Agentfile.
 
 ### `ENV`
 
@@ -89,6 +123,86 @@ locked-down agent env stays intact:
 knob the agent program reads via the runtime SDK; `ENV` lands directly
 on the spawned process's environment. Use `ENV` for OS-level
 integration, `CONFIG` for behaviour you want surfaced to the LLM.
+
+The operator can **override any `ENV` at run time** with:
+
+```sh
+otters run <ref> -e KEY=VAL -e KEY2=VAL2
+```
+
+…or from the GUI's run-from-image dialog (`/agents/new` → catalog cards,
+or `/images/<ref>` → per-version Run button). The dialog pre-fills every
+declared `ENV` row so the operator only edits the values that matter; the
+image's baked-in defaults travel as the fallback.
+
+Empty `ENV` values are valid — useful for agents that *require* a value the
+operator supplies. Pair an empty-default with the
+`io.openotters.required-env` label so operators see the requirement on
+`otters agent inspect`:
+
+```dockerfile
+ENV HASS_URL=""    "Home Assistant base URL"
+ENV HASS_TOKEN=""  "Long-lived access token"
+
+LABEL io.openotters.required-env="HASS_URL, HASS_TOKEN"
+```
+
+### `CONFIG`
+
+Runtime-SDK knobs the agent reads at start-up. Used for behaviour the
+LLM should *not* see in its tool list, but the runtime cares about:
+
+```dockerfile
+CONFIG max-tokens=2048 "Headroom for richer state dumps + filtered views"
+CONFIG max-iterations=10 "Allow fetch -> filter -> service-call chains"
+```
+
+Common keys: `max-tokens`, `max-iterations`, `temperature`, plus any
+runtime-specific knob the runtime image documents. Unknown keys are
+accepted and surfaced via the runtime's config struct so a custom runtime
+can read them.
+
+### `ADD`
+
+Bake a static file into the agent at build time:
+
+```dockerfile
+ADD ./data/cities.json /data/cities.json "City coordinates lookup table"
+```
+
+The file lands inside the image at the destination path, readable at run
+time from `etc/data/<basename>`. The optional description shows up on the
+agent's image-detail page.
+
+### `LABEL`
+
+Standard OCI image annotations stamped into the manifest. The OpenOtters
+convention reserves a few keys for operator hints:
+
+- `description` — short blurb shown in image listings.
+- `io.openotters.required-env` — comma-separated list of `ENV` keys the
+  operator MUST supply at run time. Surfaced on the image-detail page.
+- `org.opencontainers.image.source` / `.version` / `.maintainer` — standard
+  OCI labels; ghcr.io uses `source` to auto-link the package to its repo.
+
+```dockerfile
+LABEL description="Home Assistant REST agent"
+LABEL maintainer="me@example.com"
+LABEL io.openotters.required-env="HASS_URL, HASS_TOKEN"
+LABEL org.opencontainers.image.source="https://github.com/me/my-agents"
+```
+
+### `EXEC`
+
+Override the runtime's default entrypoint with a custom argv. Most agents
+don't need this — the runtime is self-driving. Useful when you've forked
+the runtime and want to point at a custom binary inside the image.
+
+### `ARG`
+
+Build-time substitutions. References to `${NAME}` in other directives are
+expanded from `ARG NAME=default` declarations and `--build-arg` overrides
+at `otters image build` time.
 
 ## The full grammar
 

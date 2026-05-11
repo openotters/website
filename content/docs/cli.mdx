@@ -4,14 +4,17 @@ description: The otters command surface, in one page.
 ---
 
 ```sh
-otters run <ref> --name <name>           # build (if needed) + start
+otters run <ref> --name <name>           # create + start an agent
 otters ls                                # list agents
 otters chat | prompt <name>              # talk to an agent
 otters stop | start | rm <name>          # lifecycle
 otters logs <name>                       # tail runtime log
+otters agent inspect <name>              # full agent state (envs, mounts, image)
 otters provider add | ls | rm            # LLM providers
 otters image build | push | pull | ls    # agent images
-otters bin ls                            # available BIN tools
+otters image inspect <ref>               # agent image manifest + config
+otters bin ls | pull | push | rm         # BIN tool images
+otters jobs ls | inspect | cancel        # async jobs
 otters info                              # daemon status
 ```
 
@@ -21,29 +24,118 @@ Run `otters <cmd> --help` for full flags and examples.
 
 ### `otters run <ref>`
 
-Builds the agent (if `<ref>` is a path to an Agentfile or directory) or pulls it
-(if it's an image reference), then starts it under the daemon.
+Pulls the agent image (if remote) into the local store and creates an
+instance. Common flags:
+
+```sh
+otters run <ref> \
+  --name my-agent              # friendly name (default: random)
+  --model anthropic/claude-…   # override the Agentfile's MODEL
+  -e KEY=VAL                   # override / set an ENV (repeatable)
+  -v HOST:TARGET[:DESC][:ro]   # bind-mount a host path (repeatable)
+```
+
+`-v` mounts are recorded in the agent's `MOUNTS.md` context so the LLM
+sees them. `ro` makes the mount read-only.
 
 ### `otters chat <name>` / `otters prompt <name> "..."`
 
-Two surfaces for the same agent. `chat` is interactive; `prompt` is one-shot and
-streams to stdout — useful in pipelines.
+Two surfaces for the same agent. `chat` is interactive; `prompt` is
+one-shot and streams to stdout — useful in pipelines.
+
+In `chat`, type `/help` to see the slash commands:
+
+- `/quit`, `/clear`, `/help`, `/session`
+- `/jobs [status]` — async jobs in this chat session
+- `/job <id>` — full state + tail of stdout/stderr
+- `/cancel <id>` — cancel a running job
+
+The bottom of the chat shows running jobs scoped to the session
+(updated every 2 s); spinner-row in-flight tool calls grow a live
+log preview when the model is mid-`job_watch` / `job_wait` /
+`job_status`.
 
 ### `otters stop | start | rm <name>`
 
 Stop a running agent, restart a stopped one, or delete it entirely.
 
+### `otters agent inspect <name>`
+
+Prints the full resolved state: image ref + digest, runtime ref +
+digest, declared envs (including any operator overrides), mounts,
+session count, the path to the agent's workspace.
+
 ## Image commands
 
-### `otters image build`
+### `otters image build <agentfile-or-dir> -t <ref>`
 
 Build an Agentfile into an OCI image stored in the local image store.
+Multiple `-t` flags tag the same digest at multiple refs in one pass
+(`-t name:v1 -t name:latest`).
 
 ### `otters image push <ref>`
 
-Push an image to a remote registry. Any OCI-compliant registry works — GHCR,
-Docker Hub, ECR, self-hosted.
+Push an image to a remote registry. Any OCI-compliant registry works
+— GHCR, Docker Hub, ECR, self-hosted.
 
 ### `otters image pull <ref>`
 
-Pull an image from a remote registry into the local store.
+Pull an image from a remote registry into the local store. The
+daemon caches the manifest's config + labels + layer summary at pull
+time so `otters image inspect` is a single SQL read afterwards (no
+docker round trip per inspect).
+
+### `otters image inspect <ref>`
+
+Prints the manifest digest, artifact type, OCI labels, declared
+envs (parsed from the agent config blob), and a layer summary.
+Backed by the local describe cache that `pull` / `build` /
+`save` populate.
+
+### `otters image ls`
+
+Lists every agent image in the local store with size + age.
+
+## BIN commands
+
+### `otters bin ls`
+
+Lists every BIN image in the local store. Bins are the per-tool OCI
+artifacts agents image-mount at run time. The daemon and the agent
+share the same store, so any BIN you push is available to any agent
+that references it.
+
+### `otters bin pull <ref>` / `otters bin push <ref>` / `otters bin rm <ref>`
+
+Move BIN images between the local store and a remote registry.
+
+### `otters bin build`
+
+Package a local binary set into a multi-arch BIN image. Used by the
+`bintool` repo to publish the canonical `ghcr.io/openotters/tools/*`
+images; rarely run directly outside that workflow. Pass `-u USAGE.md`
+to bake a USAGE.md blob into the image so the runtime surfaces it
+under each tool's model-facing description automatically.
+
+## Jobs commands
+
+Async jobs let agents start long-running BINs in the background and
+poll / watch / cancel them. The CLI mirrors the agent-side tools:
+
+```sh
+otters jobs ls [--agent <name>] [--status running|done|error|cancelled]
+otters jobs inspect <job-id>
+otters jobs cancel <job-id>
+```
+
+The dashboard's `/jobs` page renders the same data with live log
+streaming.
+
+## Daemon info
+
+### `otters info`
+
+Prints the daemon's TCP / unix-socket endpoints, the dashboard URL,
+the active executor backend (`system` or `docker`), and counts of
+running agents + sessions. Open the dashboard URL in a browser for
+the GUI surface — same agents, same sessions as the CLI.
