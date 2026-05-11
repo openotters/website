@@ -1,0 +1,221 @@
+---
+title: Why the docker executor (and what comes after)
+description: How OpenOtters runs agents in containers, why it was annoying to build, and how the same abstraction makes a kubernetes operator plausible.
+date: 2026-05-11
+author: openotters
+---
+
+![Three panels showing the docker executor metaphor.](/blog/docker-executor.png)
+
+There are two ways OpenOtters can spawn an agent right now. One was easy.
+The other one I worked on for weeks and still don't love every corner of.
+
+The easy one is the system executor. Each agent is a host subprocess.
+Runtime binary and BIN tools get copied onto disk under `~/.otters/agents/`,
+locked-down env vars, off you go. Works on any laptop, no Docker needed.
+We shipped this first because it gets you to "agent is running" with the
+fewest moving parts, which is the right thing to do when nobody has used
+the project yet.
+
+The harder one is the docker executor. Each agent runs in its own container.
+The runtime image and every BIN image attach as read-only OCI image mounts.
+Only the agent's workspace is bind-mounted as the writable surface. Same
+Agentfile, same model, same chat sessions. Completely different shape
+underneath.
+
+User-facing it's one flag:
+
+<Terminal>
+{`ottersd serve --executor docker`}
+</Terminal>
+
+The work was making that one flag mean what it should.
+
+## Why bother at all
+
+A few reasons. Roughly in the order I cared about them.
+
+Real isolation. Under the system backend the agent's `sh` tool inherits
+whatever your shell can see. We lock the env down (PATH is just the agent's
+bin dir, HOME / XDG_* / TMPDIR live in the workspace, provider tokens go
+through a separate channel) but there's no kernel boundary. Under docker
+there is. That matters the moment you want to run an agent on a box you
+don't fully trust.
+
+Provenance you can audit. When `gh` is an image mount, the agent's view of
+`gh` is exactly the bytes that ghcr.io served at `sha256:abc...`. Nothing on
+the host substitutes a local build. For anyone running agents against
+production, that's worth more than the latency cost of pulling the layer.
+
+Lifecycle. Containers stop when you tell them to. Process groups under the
+system backend mostly do, but `sh -c "a | b"` and grandchildren of
+grandchildren leave you doing pid-group math at 3am, which is when I always
+seem to end up doing pid-group math.
+
+It's also just the shape the rest of the stack already has. Operators know
+`docker ps`. Helm charts know how to ship containers. The on-call rotation
+already has muscle memory for "is it the container or the host". Pretending
+agents are a special kind of thing here would have been a marketing
+choice, not a technical one.
+
+## What slowed it down
+
+Lots of small "oh, that doesn't work the way the docs imply" moments stacked
+up. The honest highlights:
+
+`--mount type=image` only landed in Engine 28.0. Earlier engines just don't
+understand the mount type. Colima 0.8.1 still ships Engine 27.4 at the
+time I'm writing this. We probe the engine version at startup and refuse
+to boot the docker backend with a clear error instead of letting agents
+fail mid-pull. The containerd snapshotter has to be turned on in
+`daemon.json` too, which is still opt-in in some distros. Two flags from a
+smooth setup, which sounds like nothing until you have to write the error
+message someone will read at 11pm.
+
+Custom OCI artifacts confuse `cli.ImageInspect`. Our agent images use a
+custom mediatype and Docker doesn't return their labels reliably. So we
+wrap docker's content store in a small adapter that calls `ImageSave`
+and parses the OCI layout tar in memory. That's still multi-MB per call,
+which the dashboard can't afford on every page load, so we cache the
+result (config, labels, layer summary) into SQLite at every ingest
+(Build / Pull / Save / Push). Cache-only on the read path. A miss
+returns NotFound and the dashboard prompts a pull. "Sometimes fast,
+sometimes four seconds" is worse than "fast, or it tells you what to do".
+
+Stdin. `docker run` doesn't let you pipe stdin to a container you've already
+started. The path that actually works is `ContainerAttach` with `Stream:
+true, Stdin: true`, write the payload, half-close the write side so the
+BIN reads EOF, and let the existing log-streaming code carry stdout /
+stderr from there. Conceptually fine, finding the right primitive took
+half a day of reading moby SDK examples.
+
+Network back to the daemon. Agents need a way to call the host's
+daemon (for the agent-callback RPCs we already plumb today, and for
+things we want to add later, like a `job_submit` tool agents can use
+to spawn background work). On Linux it's clean: bind-mount the
+daemon's unix socket into the container, agent dials a path. Docker
+Desktop and Colima refuse to bind-mount unix sockets from the host
+(`stat: operation not supported`, thanks), so on those we fall back
+to TCP. Both already give the container a `host.docker.internal` DNS
+name pointing at the host, so the agent dials
+`http://host.docker.internal:<port>` instead. Two modes, same agent
+code, the executor picks which one to wire at container-create time.
+
+Auth is the consequence of having to open a TCP listener. The Linux
+socket path inherits Unix file permissions, that's the boundary and
+nothing else is needed. Mac and Colima can't bind-mount sockets
+through virtiofs, so we publish a TCP port. The web UI talks over
+TCP regardless. Once a TCP listener is exposed, anything that can
+dial it can hit the daemon and file ACLs don't help. So auth moves
+to the app layer: each agent gets a JWT minted by the daemon at
+create-time, scoped to that one agent, presented as
+`Authorization: Bearer …` on every call. The why-agent-scoped story
+is its own post.
+
+Each of those was an afternoon. The frustrating part is that each one
+looks like a five-minute fix until you sit down to write it.
+
+## Why doing it properly matters
+
+Running agents in containers is the visible win. The bigger one is the
+abstraction the work established: a clean boundary, `executor.Provider`,
+that the rest of OpenOtters sits behind without knowing or caring which
+backend is on the other side.
+
+`executor.Provider` is a small Go interface. Create, Load, Destroy,
+Registry. The Agent it returns implements Run, Stop, Remove, Exec, plus
+status observation. None of those signatures know about Docker. None of
+them know about subprocesses either.
+
+Everything interesting in OpenOtters lives *above* that line. The
+async-jobs pool. The streaming sinks that push stdout into SQLite while
+a BIN is mid-run. The chat session model. The tool harness. USAGE.md
+ingestion. The dashboard's run-from-image dialog. The TUI's slash
+commands. All of it talks to `executor.Provider` and `executor.Agent`,
+never to docker or subprocess primitives directly.
+
+<Mermaid chart={`flowchart TB
+  subgraph shared["executor-agnostic layer"]
+    direction LR
+    chat["chat sessions"]
+    jobs["background-job plumbing<br/>(streaming sinks, schema)"]
+    tools["tool harness<br/>(USAGE.md, ToolDocs)"]
+    ui["dashboard + TUI"]
+  end
+
+  boundary{{"executor.Provider<br/>Create / Load / Destroy / Registry<br/>Agent: Run / Stop / Exec"}}
+
+  subgraph backends["executor backends"]
+    direction LR
+    sys["system<br/>host subprocess"]
+    dkr["docker<br/>OCI image-mount"]
+    k8s["k8s operator<br/>(planned)"]
+  end
+
+  shared --> boundary
+  boundary --> sys
+  boundary --> dkr
+  boundary -.-> k8s
+
+  classDef planned stroke-dasharray: 4 3,opacity:0.7;
+  class k8s planned;
+`} />
+
+Two implementations of the same interface gives you confidence the
+boundary is real. Three would be better.
+
+## What comes after
+
+A kubernetes operator behind the same `executor.Provider` interface
+is the obvious next backend, and the whole point of having the
+boundary is that work isn't blocked on me. Someone will pick it up.
+Not where my head is, though.
+
+What I actually want next lives on the agent side: a `submit_job`
+tool.
+
+Today every tool the model calls is synchronous. It runs
+`sh -c 'go test ./...'`, the chat sits there, the build finishes,
+the turn moves on. Fine for a `cat` or a `jq`. Wrong shape for a 90s
+test suite — the model is just idling, and a slow build holds the
+whole conversation hostage.
+
+I'd rather it fire the work off, get a job id back, and come back to
+it later when it cares. Something like:
+
+<Terminal title="agent transcript">
+{`> submit_job sh -c 'go test ./... | tee out.log'
+queued: 7f3c
+
+> ...keep working on something else...
+
+> job_watch 7f3c
+[7f3c] running… (12s)
+=== RUN   TestFoo
+--- PASS: TestFoo (0.02s)
+[7f3c] done exit=0 (47s)`}
+</Terminal>
+
+Long builds, scrapes, watchers, batch jobs — anything where "block
+the turn for 90 seconds" is the wrong default.
+
+That's the bet behind doing the docker executor properly instead of
+shipping a shortcut. The same `executor.Provider` line that makes a
+second backend cheap is what makes things like `submit_job` cheap to
+add on top. Either both work, or neither does.
+
+## Try it
+
+Docker backend is live in alpha.47. On Colima:
+
+<Terminal>
+{`colima start --runtime docker --vm-type vz --cpu 4 --memory 8
+ottersd serve --executor docker`}
+</Terminal>
+
+`otters info` tells you which backend is active.
+
+If you hit a sharp edge, [Slack](https://join.slack.com/t/openotters/shared_invite/zt-3xddg51j9-I3sg4dyzt5kFS0A5~k_elQ)
+or [discussions](https://github.com/openotters/openotters/discussions). I
+specifically want to hear from anyone interested in building the k8s
+operator next.
