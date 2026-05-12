@@ -1,0 +1,163 @@
+---
+title: Why each agent gets its own JWT
+description: How OpenOtters authenticates daemon callbacks, why every agent ships with its own token, and what that shape sets up next.
+date: 2026-05-12
+author: openotters
+---
+
+Quick follow-up to the [docker executor post](/blog/docker-executor).
+I tacked a paragraph on the end about auth. Every agent ships with
+its own JWT, scoped server-side, and "the why is its own post".
+This is the why.
+
+## The setup
+
+Two listeners. A unix socket for the CLI and the agent's daemon
+callback. A TCP port for the dashboard and for Mac / Colima
+containers that can't bind-mount the socket. Both wrapped by the
+same JWT interceptor. There is no "trusted because it's local"
+path. The socket asks for a Bearer too.
+
+That isn't aesthetic. Once a TCP listener exists for the web UI,
+the socket can't be the only authenticated surface. Otherwise Linux
+is one rule, Colima is another, the dashboard is a third. One rule
+applied everywhere beats a matrix.
+
+## Two issuers
+
+The daemon mints two kinds of tokens.
+
+**Operator tokens** are issued at first start and persisted in
+`~/.otters/credentials.json`. The CLI reads them. The dashboard
+reads them through a cookie. They get admin access. Every endpoint,
+every agent, no scope check.
+
+**Agent tokens** are minted one per agent at `CreateAgent` time and
+injected into the spawn env as `OTTERS_AGENT_TOKEN`. The runtime
+forwards them as `Authorization: Bearer …` on every callback.
+
+Both are HS256 JWTs signed with the daemon's signing key. The issuer
+claim (`ottersd` vs `ottersd:agent`) distinguishes them. The agent
+one carries one extra claim, `agent_ref`, the UUID of the agent it
+was issued for.
+
+## Why per-agent
+
+The shortcut is a single shared key for every agent. It would work.
+Signatures verify, requests get processed, the host boundary doesn't
+change.
+
+What it loses is the answer to "which agent did this". If agent A
+calls `submit_job(agent_ref=B)` (by accident, by bug, by some
+prompt-injected nudge), a shared token has no way to say no. The
+daemon sees a valid Bearer and runs the job as B. The audit story
+says "an agent did it". Not useful.
+
+With per-agent tokens, every job handler runs the incoming
+`agent_ref` through a small helper before it does anything else.
+The helper looks at the token first, the wire field second, and the
+token wins:
+
+<Terminal title="internal/asyncjobs_handlers.go" lang="go">
+{`// Resolves which agent this request acts on. If the token carries
+// an AgentRef claim, that is the answer and the wire field is
+// ignored. Operator tokens (no AgentRef) fall back to whatever the
+// request body asked for, which is the admin path.
+func boundAgentRef(ctx context.Context, fromRequest string) (string, bool) {
+    if c := auth.ClaimsFromContext(ctx); c != nil && c.AgentRef != "" {
+        return c.AgentRef, true
+    }
+    if fromRequest != "" {
+        return fromRequest, true
+    }
+    return "", false
+}`}
+</Terminal>
+
+Agent A's token has `AgentRef = A`. Anything A sends, even a
+request body that says `agent_ref: B`, comes out the other side as
+A. Operator tokens have no `AgentRef`, so they pass through the
+wire field unchanged. Admin can act on any agent. Agents can only
+act on themselves.
+
+The model can be talked into asking. The daemon doesn't have to be
+talked into agreeing.
+
+## Two footguns we didn't step on
+
+The JWT library will happily verify a token using whatever algorithm
+the token's own header claims. That's the alg-confusion footgun.
+Hand a naive verifier a token with `"alg": "none"` and it says
+"valid, here are the claims". So `Validate` pins HS256 explicitly
+and rejects every other method before claims are even decoded:
+
+<Terminal title="internal/auth/jwt.go" lang="go">
+{`parsed, err := jwt.ParseWithClaims(raw, &Claims{},
+    func(t *jwt.Token) (any, error) {
+        if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, fmt.Errorf("unexpected alg %v", t.Header["alg"])
+        }
+        return key, nil
+    },
+    jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+)`}
+</Terminal>
+
+Two lines of intent that have eaten a non-trivial number of
+production deployments elsewhere.
+
+The other footgun is treating short TTLs as a security feature.
+Agent tokens have a ten-year expiry, which sounds wrong until you
+notice revocation is the lever that actually matters. Every token
+carries a `jti`. Remove the agent, the jti goes in a revocation
+set, future calls fail validation regardless of `exp`. Rotation
+buys nothing here. The runtime's process lifetime already bounds
+damage, and the failure mode that matters (forged token) is caught
+at the signature check, long before exp.
+
+## What this shape sets up
+
+The interesting bit isn't what auth does today. It's what the shape
+makes cheap to add later.
+
+The one I keep coming back to is agent-to-agent. As soon as one
+agent can call another (`submit_job` on someone else's agent, ask
+agent B a question, hand off work mid-turn), the question becomes
+"which agent is allowed to do what to whom". A JWT is exactly the
+right substrate for that. Claims are arbitrary key-value, the
+decoder tolerates unknown fields, so adding a `scopes` array or a
+`can_call` list is extending `Claims`, not redesigning the trust
+model. Server still enforces, client still doesn't have to be
+trusted, the boundary stays in one place.
+
+A few smaller things on the same list.
+
+**Per-RPC scopes.** "Can submit jobs, can't read sessions." Same
+extension shape as A2A. One more field in `Claims`, one more check
+in the interceptor.
+
+**Key rotation.** The schema has room (jti is already the
+revocation unit). The dashboard flow is what's missing.
+
+**Audit trail.** The interceptor knows the jti on every call. It
+just doesn't write it anywhere yet.
+
+None of those block the threat model today. Local daemon, agents
+you put there yourself, prompt injection covered by the server-side
+rewrite. All of them get cheaper to add because the issuer /
+agent_ref split is already in place.
+
+## The bet
+
+Same bet as the executor boundary, applied to auth. Get the shape
+right while the surface is small, so the hard things later (A2A
+permissions, per-RPC scopes, key rotation, audit) are "extend
+`Claims`" instead of "reshuffle the trust model". Worth doing
+properly even if it looks like overkill for a daemon you run on
+your laptop, because the laptop daemon is the same code as the one
+that'll be running fleets of agents talking to each other.
+
+If you find a hole, please file it.
+[Slack](https://join.slack.com/t/openotters/shared_invite/zt-3xddg51j9-I3sg4dyzt5kFS0A5~k_elQ)
+or [discussions](https://github.com/openotters/openotters/discussions).
+Threat models get stronger the more eyes are on them.
