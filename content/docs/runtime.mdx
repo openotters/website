@@ -85,6 +85,48 @@ ottersd serve --executor docker
 `otters info` reports the active backend so you can confirm which one is
 in effect after a restart.
 
+## Agent lifecycle
+
+An agent walks through a small state machine from creation to
+removal. The dashboard renders each state as a coloured badge, and
+the daemon surfaces them on the wire via `AgentInfo.status`.
+
+```
+        pulling ── (cache hit) ──┐
+            │                    │
+            ▼                    ▼
+        starting ─────────► failed  (with failure_reason)
+            │                    ▲
+            ▼                    │
+        ready ◄──────────────────┤
+            │ ▲                  │
+            ▼ │                  │
+        working ─────────────────┘
+            │
+            ▼
+        stopped ── otters start ──► pulling
+            │
+            ▼
+        removing ──► removed
+```
+
+| State      | Meaning                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------- |
+| `pulling`  | Image / layers being downloaded into the local store. Slow if cold cache.               |
+| `starting` | Workspace materialised, model resolved, runtime subprocess / container spawned, awaiting the readiness probe. |
+| `ready`    | Runtime answered the readiness probe. Idle, accepting RPCs.                             |
+| `working`  | At least one chat turn or async-job RPC is in flight to this agent.                     |
+| `stopped`  | User-initiated stop, or the runtime exited.                                             |
+| `failed`   | Terminal error. The companion `failure_reason` (`pull` / `init` / `model` / `readiness_timeout` / `crashed`) explains the cause; the dashboard surfaces it under the badge. |
+| `removing` | Cleanup in progress.                                                                    |
+| `removed`  | Agent is gone.                                                                          |
+
+`pulling` and `starting` are transient — the badge pulses amber in
+the dashboard. `ready` and `working` are healthy (green / blue);
+`failed` is red with the reason inline. Auto-restart with backoff
+kicks in on `failed` + `pull` / `init` / `model`; `readiness_timeout`
+and `crashed` are terminal and need operator action.
+
 ## Spawn environment
 
 Every agent runs with a locked-down env so host secrets stay out of
