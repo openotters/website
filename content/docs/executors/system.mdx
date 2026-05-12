@@ -1,0 +1,96 @@
+---
+title: System executor
+description: Each agent runs as a host subprocess. Default backend, no Docker required.
+---
+
+The system executor runs each agent as a host subprocess. The runtime binary
+and every BIN tool are materialised onto local disk under
+`~/.otters/agents/<id>/`, the agent is spawned with a locked-down environment,
+and `ottersd` supervises its lifecycle directly.
+
+It's the default backend. Works on any platform that can run Go binaries —
+macOS, Linux, the Apple Silicon laptop you're reading this on.
+
+## When to use it
+
+- You're trying OpenOtters out and you don't want to install or configure
+  Docker.
+- You want the smallest possible runtime overhead per agent.
+- You're happy with a process-level isolation boundary — fine for trusted
+  Agentfiles, less appropriate for code you didn't write.
+
+## How it works
+
+On `otters run <image>` the daemon does, roughly:
+
+1. Resolves the agent image and every BIN tool image from the registry.
+2. Materialises an FHS-style root at `~/.otters/agents/<id>/` — runtime
+   binary copied to `usr/bin/runtime`, every BIN binary to
+   `usr/bin/<name>`, scratch dir at `workspace/`.
+3. Builds the locked-down env (PATH, HOME, XDG_*, TMPDIR all rooted under
+   the agent dir).
+4. Forks the runtime as a subprocess, hands it the env + a unix socket
+   addressed at the daemon for callbacks.
+
+Stop / restart go through the same subprocess: `SIGTERM`, then `SIGKILL`
+after a grace period.
+
+## Local layout
+
+```
+~/.otters/
+├── agents/
+│   └── <agent-uuid>/
+│       ├── usr/bin/runtime          # materialised runtime binary
+│       ├── usr/bin/<tool>           # materialised BIN binaries
+│       ├── home/                    # agent's HOME
+│       ├── tmp/                     # agent's TMPDIR
+│       ├── etc/                     # agent.yaml + per-agent config
+│       └── workspace/               # agent CWD; auto-generated context files
+├── logs/<agent-uuid>.log            # per-agent stdout/stderr
+├── providers.yaml                   # LLM provider credentials
+├── daemon.db                        # SQLite state
+└── registry/                        # embedded OCI store (system only)
+```
+
+The system executor's registry is an embedded ORAS store under
+`~/.otters/registry/`. Image pulls / pushes go through it. The Docker
+executor uses Docker's image store instead and doesn't create this
+directory.
+
+## Spawn environment
+
+Every agent runs with a minimal env. Reserved keys are stripped, and the
+Agentfile can opt extra OS env vars in via the
+[`ENV`](/docs/agentfile#env) instruction. Reserved (never settable from
+the Agentfile):
+
+- `PATH` — rooted at the agent's `usr/bin/`
+- `HOME`, `XDG_*`, `TMPDIR` — rooted under the agent dir
+- `LANG`, `OTTERS_AGENT_ROOT` — set by the runtime
+- `*_API_KEY`, `*_API_BASE` — managed by `otters provider add`
+
+This keeps host secrets out of the agent's reach, even when the agent
+spawns subprocesses via `sh`.
+
+## Sandbox properties
+
+- Process isolation only. No kernel boundary; the agent can see whatever
+  the host shell can see, modulo the locked-down env.
+- Process groups handle lifecycle, mostly. Subprocess chains
+  (`sh -c "a | b"`) are tracked via PGID, but pathological cases (deep
+  re-exec chains, daemonised grandchildren) can survive `otters stop`.
+- File system access is wherever PATH and the agent's CWD can reach.
+  Bind-mounts declared at `otters run -v` don't actually mount anything
+  on the system backend — the path is exposed as a workspace entry but
+  every file remains where the host put it.
+
+If those properties don't fit, see the
+[docker executor](/docs/executors/docker).
+
+## Configuration
+
+The system executor takes no executor-specific config. Daemon-level knobs
+(socket path, listener, pool tuning) live in
+[`~/.otters/ottersd.yaml`](/docs/runtime#configuration) and apply to both
+backends.

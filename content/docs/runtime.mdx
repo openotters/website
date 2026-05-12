@@ -1,37 +1,33 @@
 ---
 title: Runtime
-description: What the daemon does, and where things live on disk.
+description: What ottersd does, how it's configured, and where its state lives on disk.
 ---
 
-The runtime — `ottersd` — is the long-running process that hosts your agents.
-It owns:
-
-- **The agent loop**: tool calls, streaming, retries.
-- **The image store**: pulled and built OCI images live here.
-- **Sessions**: chat history, structured-output captures, log persistence.
-- **Provider config**: where your LLM credentials are kept.
-- **The spawn environment**: locked down so agents never see host secrets.
-  An Agentfile can opt in to extra OS env vars via the
-  [`ENV`](/docs/agentfile#env) instruction; reserved keys (PATH, HOME,
-  XDG_*, TMPDIR, LANG, OTTERS_AGENT_ROOT, *_API_KEY, *_API_BASE) are
-  rejected at build time so the sandbox stays intact.
+`ottersd` is the long-running daemon process that hosts your agents. It
+owns the agent loop, the local image store, persistent state (sessions,
+chat history, captured tool output), provider credentials, and the
+spawn environment that keeps host secrets out of the agent's reach.
 
 ## Local layout
 
-By default, `ottersd` keeps state under `~/.otters/`. Inside you'll find:
+By default, `ottersd` keeps state under `~/.otters/`:
 
-- `agents/` — per-agent runtime state (workspaces, agent.yaml).
-- `logs/` — per-agent runtime logs (one file per agent UUID).
-- `providers.yaml` — registered LLM providers (created by `otters provider add`).
-- `daemon.db` — SQLite state store (running agents, sessions, mounts).
-- `registry/` — the embedded OCI store. **System executor only** — the
-  Docker executor uses Docker's image store instead and `registry/` is
-  not created.
+```
+~/.otters/
+├── agents/          # per-agent runtime state (workspaces, agent.yaml)
+├── logs/            # per-agent runtime logs (one file per agent UUID)
+├── providers.yaml   # registered LLM providers (otters provider add)
+├── daemon.db        # SQLite state store (agents, sessions, jobs, mounts)
+└── registry/        # embedded OCI store (system executor only)
+```
+
+The Docker executor uses Docker's image store instead of `registry/`;
+that directory only exists under the system backend.
 
 ## Configuration
 
-`ottersd serve` reads YAML configuration on startup and merges it with CLI flags
-and environment variables. Precedence (highest first):
+`ottersd serve` reads YAML on start-up and merges with CLI flags and
+environment variables. Precedence (highest first):
 
 1. CLI flag (`--executor docker`)
 2. Environment variable (`OTTERSD_EXECUTOR=docker`)
@@ -40,45 +36,26 @@ and environment variables. Precedence (highest first):
 
 ### Config file locations
 
-`ottersd` looks for config in this order — first match wins:
+First match wins:
 
 1. `--config` / `-c` flag (any path you supply)
-2. `~/.otters/ottersd.yaml` (user-scoped — same directory as the daemon's
-   other state: `agents/`, `logs/`, `providers.yaml`, `daemon.db`)
-3. `/etc/otters/ottersd.yaml` (host-scoped, e.g. for systemd-managed daemons)
+2. `~/.otters/ottersd.yaml` — user-scoped, same directory as the rest
+   of the daemon's state.
+3. `/etc/otters/ottersd.yaml` — host-scoped, for systemd-managed
+   daemons.
 
-Every `serve` flag has a matching YAML key — kebab-case becomes nested keys
-under the `serve:` subcommand. Run `ottersd serve --help` for the full list.
-
-### Picking an executor backend
-
-`ottersd` ships two executor backends:
-
-- **`system`** (default) — each agent runs as a host subprocess. Works on any
-  platform; the runtime + every BIN tool is materialised onto local disk under
-  `~/.openotters/agents/<id>`.
-- **`docker`** — each agent runs in its own container. The runtime + every BIN
-  image is mounted via OCI image-mount (read-only); only the agent workspace
-  is bind-mounted as the writable surface. Storage moves into Docker's image
-  store — no embedded oras registry.
-
-The `docker` backend requires:
-
-- Docker Engine **≥ 28.0** (image-mount type stabilised here)
-- The **containerd snapshotter** enabled
-  (`{"features":{"containerd-snapshotter":true}}` in `daemon.json`)
-
-`ottersd` probes both at startup and refuses to boot with a clear error when
-either is missing.
+Every `serve` flag has a matching YAML key — kebab-case becomes nested
+keys under `serve:`. Run `ottersd serve --help` for the full list.
 
 ### Example: `~/.otters/ottersd.yaml`
 
 ```yaml
 serve:
   # Backend: 'system' (default) or 'docker'.
+  # See /docs/executors for the comparison.
   executor: docker
 
-  # Optional: pin the unix socket / TCP listener / data paths.
+  # Pin the unix socket / TCP listener / data paths.
   socket-path: /var/run/ottersd.sock
   http-addr: 127.0.0.1:5500
   no-ui: false
@@ -93,7 +70,7 @@ serve:
 The same settings via env vars (e.g. for a systemd unit or a Colima
 post-start hook):
 
-```bash
+```sh
 export OTTERSD_EXECUTOR=docker
 export OTTERSD_HTTP_ADDR=127.0.0.1:5500
 ottersd serve
@@ -101,98 +78,37 @@ ottersd serve
 
 Or one-shot at the CLI:
 
-```bash
+```sh
 ottersd serve --executor docker
 ```
 
-`otters info` reports the active backend so you can confirm which one is in
-effect after a restart.
+`otters info` reports the active backend so you can confirm which one is
+in effect after a restart.
 
-## Workspaces
+## Spawn environment
 
-Each agent gets a workspace directory it can read and write. The workspace
-contains auto-generated context files the runtime feeds to the agent's
-system prompt so it knows what's available:
+Every agent runs with a locked-down env so host secrets stay out of
+reach, even when the agent spawns subprocesses via `sh`. The Agentfile
+can opt in extra OS env vars via the [`ENV`](/docs/agentfile#env)
+instruction; reserved keys are rejected at build time:
 
-- **`AGENT.md`** — the agent's declared bins, environment, and a positive
-  Capabilities section (network, persistent memory, async jobs, persistent
-  workspace) plus a strict Binaries-allowlist directive. Together these stop
-  the model from hallucinating either missing tools or absent capabilities.
-- **`WORKSPACE.md`** — the FHS-style layout of the workspace tree, with
-  absolute paths the model uses verbatim in tool calls.
-- **`MOUNTS.md`** — present only when the agent was started with
-  `otters run -v HOST:TARGET[:DESC][:ro|rw]` mounts; surfaces the bind-mount
-  target paths so the model knows what host data is exposed and which
-  paths are read-only.
-- One file per `CONTEXT` heredoc declared in the Agentfile
-  (`SOUL.md`, `SCENARIOS.md`, `IDENTITY.md`, …).
+- `PATH` — rooted at the agent's `bin/` (system) or
+  `/opt/bins/<name>` (docker).
+- `HOME`, `XDG_*`, `TMPDIR` — rooted under the agent's directory.
+- `LANG`, `OTTERS_AGENT_ROOT` — set by the runtime.
+- `*_API_KEY`, `*_API_BASE` — travel through the provider-credential
+  channel; declare a [provider](/docs/cli) instead.
 
-## Tools
-
-Tools are OCI images declared as `BIN` directives in the Agentfile. The
-runtime mounts each one read-only into the agent's environment and registers
-it with the LLM. A BIN image can carry a `USAGE.md` blob (baked at build time
-by `otters bin build -u …`); the runtime surfaces it under the tool's
-model-facing description as a `## Usage` section, so the model gets long-form
-docs without you re-stating them in every Agentfile.
-
-The canonical tool image set lives at
-[`ghcr.io/openotters/tools/*`](https://github.com/orgs/openotters/packages):
-`curl`, `jq`, `sh`, `wget`, `kubectl`, `gh`, `helm`, `crane`, `yq`, `yaegi`,
-`pandoc`, `fd`, `rg`, and the small coreutils set (`cat`, `ls`, `find`, …).
-
-## Async jobs
-
-The runtime ships with built-in tools for long-running background work,
-auto-registered when the daemon URL + an agent token are present in the
-spawn env:
-
-- `job_submit({"bin":"…", "args":[…], "stdin":"…"})` — dispatches a BIN
-  against the agent's environment, returns a `job_id` immediately.
-- `job_list({})` — lists jobs in the current chat session (auto-scoped
-  via the `io.openotters.session-id` label).
-- `job_status({"job_id":"…"})` — non-blocking snapshot.
-- `job_wait({"job_id":"…"})` — blocks until terminal; if the agent's
-  turn is interrupted, the job is auto-cancelled.
-- `job_watch({"job_id":"…"})` — same wait semantics but returns *only*
-  stdout, and the underlying job keeps running on disconnect.
-- `job_cancel({"job_id":"…"})` — SIGKILLs the in-flight BIN; captured
-  stdout/stderr up to the kill point are preserved.
-
-Stdout / stderr stream into SQLite every ~200 ms while the BIN runs, so
-the dashboard's `/jobs/<id>` page and the chat's inline log panel both
-render live progress without the agent stalling.
-
-## Sessions
-
-Every conversation has a stable session id used as the URL slug and as
-the `io.openotters.session-id` label on every async job the agent spawns
-during the chat. The convention is:
-
-- `cli:chat:<uuid>` — minted by `otters chat <name>`
-- `gui:chat:<uuid>` — minted by the dashboard's "New session" button
-
-The shared label namespace makes `otters jobs ls` filter cleanly across
-both surfaces.
-
-## Surfaces
-
-The same daemon serves three surfaces. You can switch between them
-mid-conversation; sessions are shared.
-
-- **TUI**: `otters chat <name>` — terminal-first, full streaming,
-  keyboard-driven, with slash commands (`/jobs`, `/job`, `/cancel`)
-  and a bottom-bar strip of running jobs.
-- **GUI**: a browser dashboard on the daemon's HTTP port —
-  agent dashboard with stats + recent activity, image catalog with a
-  run-from-image dialog (override `MODEL` + every `ENV`), live log
-  streaming on `/jobs/<id>`, chat with inline tool calls and live
-  job-log previews.
-- **Programmatic**: each surface is a thin client over the daemon's
-  Connect/gRPC API. Drop in `pkg/agent` (runtime SDK) or talk to
-  the API directly when embedding agents in another Go program.
+The lock-down rules apply to both [executor backends](/docs/executors).
 
 ## See also
 
-- **[Agentfile spec](/docs/agentfile)** — what you build into an image.
-- **[CLI reference](/docs/cli)** — what you type at the daemon.
+- **[Workspaces](/docs/workspaces)** — the per-agent FHS root and the
+  context files the runtime injects into the model's system prompt.
+- **[Sessions](/docs/sessions)** — what's persisted per conversation,
+  and how sessions are shared across surfaces.
+- **[Authentication](/docs/auth)** — the JWT model on every listener.
+- **[Executors](/docs/executors)** — how agents are run (system vs docker).
+- **[Tools (BINs)](/docs/tools)** — how tools are packaged and mounted.
+- **[Async jobs](/docs/jobs)** — long-running background work.
+- **[Surfaces](/docs/surfaces)** — TUI, dashboard, programmatic.

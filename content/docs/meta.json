@@ -1,4 +1,20 @@
 {
 	"title": "Documentation",
-	"pages": ["index", "quickstart", "agentfile", "cli", "runtime"]
+	"pages": [
+		"index",
+		"quickstart",
+		"---Concepts---",
+		"workspaces",
+		"sessions",
+		"tools",
+		"jobs",
+		"surfaces",
+		"auth",
+		"---Reference---",
+		"agentfile",
+		"cli",
+		"---Architecture---",
+		"runtime",
+		"executors"
+	]
 }

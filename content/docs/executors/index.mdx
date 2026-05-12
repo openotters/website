@@ -1,0 +1,53 @@
+---
+title: Executors
+description: How OpenOtters runs agents, and how to pick a backend.
+---
+
+An executor is the thing that turns an agent image into a running agent. It
+owns the agent's filesystem layout, its spawn environment, its lifecycle
+(start, stop, exec), and the way the runtime reaches back to `ottersd` for
+callbacks like async-job submission.
+
+`ottersd` ships with two executor backends:
+
+| Backend  | Isolation        | Storage           | Requirements      |
+| -------- | ---------------- | ----------------- | ----------------- |
+| `system` | host subprocess  | embedded registry | none              |
+| `docker` | OCI container    | Docker image store| Docker Engine ≥ 28 + containerd snapshotter |
+
+Both share the same `executor.Provider` interface, so everything above that
+line (chat sessions, async jobs, the tool harness, the dashboard) is
+backend-agnostic. You can switch backends without touching your Agentfile,
+your tool images, or your code.
+
+## Picking one
+
+- **Start with [`system`](/docs/executors/system)** when you're trying things
+  out, when you don't have Docker installed, or when you just want the agent
+  to be a subprocess you can `kill` if it hangs.
+- **Move to [`docker`](/docs/executors/docker)** when you want a kernel-level
+  boundary, when you want image-pinned BIN tools (the `gh` your agent runs
+  is exactly the bytes ghcr.io served), or when you're running on a box you
+  don't fully trust.
+
+## Selecting a backend
+
+The backend is chosen at daemon-start time. Precedence (highest first):
+
+1. CLI flag (`--executor docker`)
+2. Environment variable (`OTTERSD_EXECUTOR=docker`)
+3. YAML config (`serve.executor` in `~/.otters/ottersd.yaml`)
+4. Built-in default (`system`)
+
+```sh
+ottersd serve --executor docker
+```
+
+`otters info` reports the active backend, so you can confirm which one is
+running after a restart.
+
+## Background
+
+For the implementation story — why the docker backend was annoying to build,
+what the `executor.Provider` boundary buys, where it heads next — see the
+[docker executor blog post](/blog/docker-executor).

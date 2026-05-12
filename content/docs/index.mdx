@@ -13,9 +13,25 @@ runtime, plug in a custom executor, or embed agents in another Go program.
 ## Where to start
 
 - **[Quickstart](/docs/quickstart)** — install the daemon, run a demo agent, chat with it.
+
+### Concepts
+
+- **[Workspaces](/docs/workspaces)** — the per-agent FHS root and the context files the runtime injects into the model's system prompt.
+- **[Sessions](/docs/sessions)** — chat history, tool-call replay, label-scoped async jobs, sharing across surfaces.
+- **[Tools (BINs)](/docs/tools)** — how tools are packaged, mounted, and surfaced to the model.
+- **[Async jobs](/docs/jobs)** — long-running background work the agent fires and checks on later.
+- **[Surfaces](/docs/surfaces)** — TUI, dashboard, programmatic API.
+- **[Authentication](/docs/auth)** — the JWT model on every listener (operator vs agent tokens).
+
+### Reference
+
 - **[Agentfile spec](/docs/agentfile)** — every directive, with examples.
 - **[CLI reference](/docs/cli)** — the `otters` command surface.
-- **[Runtime](/docs/runtime)** — what the daemon does, where things live on disk.
+
+### Architecture
+
+- **[Runtime](/docs/runtime)** — what `ottersd` does, where state lives, how it's configured.
+- **[Executors](/docs/executors)** — system vs docker, and how to pick.
 
 ## Why declarative?
 

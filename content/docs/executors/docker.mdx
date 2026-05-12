@@ -1,0 +1,150 @@
+---
+title: Docker executor
+description: Each agent runs in its own container, with a kernel-level isolation boundary and content-addressed BIN images.
+---
+
+The docker executor runs each agent inside its own container. The runtime
+image and every BIN image attach as read-only OCI image mounts; only the
+agent workspace is bind-mounted as the writable surface. Storage moves
+into Docker's image store and the daemon's embedded registry is unused.
+
+## When to use it
+
+- You want a kernel-level isolation boundary around each agent's `sh`,
+  not just a locked-down env.
+- You want auditable provenance for tools: the `gh` your agent runs is
+  exactly the bytes ghcr.io served at `sha256:...`.
+- You're running agents on a box you don't fully trust, or against
+  production systems where the blast radius of a misbehaving agent
+  matters.
+
+## Requirements
+
+- **Docker Engine ≥ 28.0.** The `--mount type=image` primitive the
+  executor depends on stabilised here. Earlier engines won't recognise
+  the mount type and the daemon refuses to start the docker backend.
+- **containerd snapshotter enabled.** Add to `daemon.json`:
+
+  ```json
+  {
+    "features": { "containerd-snapshotter": true }
+  }
+  ```
+
+  Restart the engine. The daemon probes for this at start-up and errors
+  out with a clear message when it's off.
+
+`ottersd` checks both requirements at boot. If anything's missing you
+get a one-line error pointing at the fix, not an unexplained failure
+later when an agent tries to start.
+
+## Colima quickstart
+
+On macOS, [Colima](https://github.com/abiosoft/colima) is the easiest
+way to get a recent enough engine:
+
+```sh
+colima start --runtime docker --vm-type vz --cpu 4 --memory 8
+```
+
+Check the engine version with `docker version`. As of writing, Colima
+0.8.1 ships Engine 27.4, which is _too old_ for the docker executor.
+Upgrade Colima (or rebuild its VM with a newer engine binary) before
+enabling the backend.
+
+## How it works
+
+On `otters run <image>` the daemon does, roughly:
+
+1. Pulls the agent image and every BIN tool image into Docker's image
+   store.
+2. Creates a container with:
+   - `RUNTIME` image attached at `/opt/runtime` via
+     `--mount type=image,readonly`.
+   - Each `BIN` image attached at `/opt/bins/<name>/` the same way.
+   - The agent's FHS-style root (`/agent/`) and workspace
+     (`/workspace/`) bind-mounted from the host.
+   - The runtime binary at `/opt/runtime/runtime` as the entrypoint.
+3. Wires the daemon-callback channel:
+   - On native Linux, the host's daemon socket is bind-mounted at
+     `/run/ottersd.sock` and `OTTERSD_URL=unix:///run/ottersd.sock`
+     is set in the spawn env.
+   - On Docker Desktop / Colima (where virtiofs blocks unix-socket
+     bind-mounts), the runtime dials the daemon's TCP listener via
+     `host.docker.internal`. `OTTERSD_URL` is set to the matching
+     `http://` URL.
+4. Starts the container. Stop / restart go through Docker's lifecycle
+   primitives (`docker stop`, `docker start`).
+
+Async-job exec containers (one short-lived container per `job_submit`
+call) use the same image-mount + daemon-callback wiring as the agent
+container.
+
+## Storage
+
+The docker backend uses Docker's image store directly:
+
+- `otters image pull / push / build` go through ORAS against the
+  configured registry, then ingest the result into Docker.
+- `otters image rm` removes the Docker image and the daemon's
+  describe cache row.
+- `~/.otters/registry/` is **not** created. The embedded oras
+  registry is system-executor only.
+
+The daemon caches `Inspect` results (config, labels, layer summary)
+in SQLite at every ingest so the dashboard's image listings stay
+fast.
+
+## Networking
+
+Two daemon-callback shapes, picked automatically per platform:
+
+| Platform                  | Channel              | OTTERSD_URL                             |
+| ------------------------- | -------------------- | --------------------------------------- |
+| Native Linux Docker       | unix-socket bind-mount | `unix:///run/ottersd.sock`            |
+| Docker Desktop (macOS)    | TCP via Desktop      | `http://host.docker.internal:<port>`    |
+| Colima                    | TCP via host-gateway | `http://host.docker.internal:<port>`    |
+
+The Linux path is the clean one — the agent dials a unix socket, no
+TCP listener has to exist, the daemon's authentication boundary is
+the socket's file permissions plus a JWT. The macOS / Colima path
+falls back to TCP because virtiofs can't pass unix sockets through.
+
+Auth on every callback is a per-agent JWT minted at create-time and
+scoped to that agent. See the
+[agent-scoped JWTs post](/blog/agent-scoped-jwts) for why and how.
+
+## Spawn environment
+
+Identical to the [system executor](/docs/executors/system#spawn-environment)
+above the bind-mount boundary — same reserved keys, same `ENV`
+opt-in. Container-internal paths differ:
+
+- `PATH` includes `/opt/bins/<name>` per BIN.
+- `HOME`, `XDG_*`, `TMPDIR` live under `/agent/` (the bind-mounted FHS root).
+- The agent's CWD is `/workspace/` (the writable scratch dir).
+
+## Sandbox properties
+
+- Kernel-level isolation. The agent's `sh` only sees what the container
+  was built with, plus what's bind-mounted in.
+- BIN provenance is content-addressed. The image-mount source is a
+  digest; nothing on the host substitutes a local binary.
+- Lifecycle is Docker's job. `otters stop` is one `docker stop` away.
+  No PGID math, no orphan grandchildren.
+- Mount declarations on `otters run -v HOST:TARGET[:ro|rw]` map directly
+  to container bind-mounts. The MOUNTS.md surfaced in the agent's
+  workspace lists what's exposed.
+
+## Configuration
+
+The docker backend takes no executor-specific config beyond
+`executor: docker` itself. Daemon-level knobs live in
+[`~/.otters/ottersd.yaml`](/docs/runtime#configuration) and apply to
+both backends.
+
+## Background
+
+The [docker executor blog post](/blog/docker-executor) walks through
+why this was annoying to build, what the `executor.Provider`
+boundary buys, and where it heads next.
