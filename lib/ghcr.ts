@@ -519,6 +519,7 @@ export async function getImageDetails(
 	const description =
 		annotations["org.opencontainers.image.description"] ??
 		annotations["vnd.openotters.bin.description"] ??
+		annotations.description ??
 		""
 	const source = annotations["org.opencontainers.image.source"] ?? ""
 	const title =
