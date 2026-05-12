@@ -1,11 +1,11 @@
 import { ArrowRight, Github } from "lucide-react"
 import type { Metadata } from "next"
 
-import { RegistryGrid } from "@/components/templates/registry-grid"
+import { RegistryBrowser } from "@/components/templates/registry-browser"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyCommand } from "@/components/ui/copy-command"
-import { listPackages } from "@/lib/ghcr"
+import { listImageDetails } from "@/lib/ghcr"
 
 export const metadata: Metadata = {
 	title: "Agents",
@@ -13,10 +13,10 @@ export const metadata: Metadata = {
 		"Public agent images on GHCR. Pull and run, no clone needed.",
 }
 
-export const revalidate = 3600
+export const revalidate = 300
 
 export default async function AgentsPage() {
-	const { agents } = await listPackages()
+	const { agents } = await listImageDetails()
 
 	return (
 		<div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
@@ -53,15 +53,15 @@ export default async function AgentsPage() {
 			</header>
 
 			<section>
-				<div className="mb-4 flex items-baseline justify-between">
-					<h2 className="font-semibold text-foreground text-xl">
-						Available agents
-					</h2>
-					<span className="text-muted-foreground text-sm">
-						{agents.length} {agents.length === 1 ? "image" : "images"}
-					</span>
-				</div>
-				<RegistryGrid emoji="🦦" items={agents} />
+				<h2 className="mb-6 font-semibold text-foreground text-xl">
+					Available agents
+				</h2>
+				<RegistryBrowser
+					detailHrefPrefix="/agents"
+					emoji="🦦"
+					items={agents}
+					noun="agents"
+				/>
 			</section>
 		</div>
 	)
