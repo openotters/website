@@ -1,0 +1,76 @@
+---
+title: Async jobs
+description: How agents run long-running BINs in the background, and how operators inspect them.
+---
+
+Most tool calls block the chat turn. The model invokes a BIN, the
+runtime waits for it, the model continues. That's the wrong shape for a
+90-second build or a long scrape. Async jobs let an agent dispatch a BIN
+in the background, get a handle back, and check on it later.
+
+Stdout and stderr stream into SQLite while the BIN runs, so the
+dashboard and the chat-side log panel render live progress without
+the agent stalling.
+
+## Agent-facing tools
+
+The runtime auto-registers a small set of tools when the daemon URL
+and an agent token are present in the spawn env:
+
+| Tool          | Purpose                                                       |
+| ------------- | ------------------------------------------------------------- |
+| `job_submit`  | Dispatch a BIN against the agent's environment. Returns a job id immediately. |
+| `job_list`    | List jobs in the current chat session.                        |
+| `job_status`  | Non-blocking snapshot of a job.                               |
+| `job_wait`    | Block until terminal. Auto-cancels if the chat turn is interrupted. |
+| `job_watch`   | Block until terminal but return only stdout; the job keeps running on disconnect. |
+| `job_cancel`  | SIGKILL the in-flight BIN. Captured stdout / stderr up to the kill point is preserved. |
+
+`job_submit` takes `{"bin": "<name>", "args": [...], "stdin": "..."}`,
+shaped like the synchronous tool call.
+
+## Session scoping
+
+Every async job is labelled with the chat session that submitted it
+(`io.openotters.session-id`). `job_list` filters on this automatically,
+so the model only sees its own work. The CLI and dashboard apply the
+same filter when scoped to a session.
+
+## Operator surfaces
+
+### CLI
+
+```sh
+otters jobs ls [--agent <name>] [--status running|done|error|cancelled]
+otters jobs inspect <job-id>
+otters jobs cancel <job-id>
+```
+
+In `otters chat`, slash commands hit the same data without leaving the
+session:
+
+- `/jobs [status]` — async jobs in this chat session
+- `/job <id>` — full state + tail of stdout/stderr
+- `/cancel <id>` — cancel a running job
+
+A bottom-bar strip shows running jobs scoped to the session (updated
+every 2 s). In-flight tool calls grow a live log preview when the model
+is mid-`job_watch` / `job_wait` / `job_status`.
+
+### Dashboard
+
+`/jobs/<id>` renders the same data with live log streaming. The chat
+view inlines a log preview under each running async tool call so you
+can follow along without leaving the conversation.
+
+## Persistence
+
+The job row and its captured output stay in SQLite after the BIN
+terminates. `otters jobs inspect` and the dashboard can replay finished
+jobs at any time. Cancelled jobs preserve everything captured up to the
+SIGKILL.
+
+## See also
+
+- **[Tools (BINs)](/docs/tools)** — what `job_submit` is dispatching.
+- **[CLI `jobs` commands](/docs/cli#jobs-commands)** — full flags.

@@ -1,0 +1,99 @@
+---
+title: Sessions
+description: How conversations are scoped, persisted, and shared across the CLI, the dashboard, and the runtime.
+---
+
+A session is one conversation between an operator and an agent. It owns
+the message history, the tool calls the model made, the captured
+output of those calls, and a label namespace that every async job
+spawned inside the conversation inherits.
+
+Sessions are the durability layer of OpenOtters. Restart the daemon,
+re-open the chat, the conversation picks up where you left it. Switch
+from the TUI to the dashboard, hit "open recent", and the same
+session shows up there.
+
+## Session IDs
+
+Every conversation has a stable id, minted by whichever surface
+opened it:
+
+- `cli:chat:<uuid>` — minted by `otters chat <name>`.
+- `gui:chat:<uuid>` — minted by the dashboard's New session button.
+
+The prefix records origin but is not load-bearing — the daemon
+treats both forms uniformly. The id is the URL slug on the
+dashboard (`/agents/<name>/sessions/<id>`), the slash-command
+target (`/session` in the TUI), and the label key on every async
+job the session spawns.
+
+## What gets persisted
+
+The daemon writes session state to SQLite as it streams:
+
+- **Messages** — user prompts and assistant replies, in order.
+- **Tool calls** — name, arguments, captured stdout / stderr, exit
+  code, timing. Replay-shaped so the runtime can reconstruct the
+  conversation from history alone.
+- **Branches** — when a user re-prompts mid-conversation, the prior
+  branch is kept. `otters chat` doesn't surface branch picking yet;
+  the dashboard does on `/agents/<name>/sessions/<id>`.
+- **Async jobs** — labelled with the session id (see below).
+
+The agent's workspace state (files the model wrote with `sh -c`) is
+**not** session-scoped — it's per-agent. Switching sessions doesn't
+roll the workspace back. If you want session-scoped scratch, write
+into `${OTTERS_SESSION_DIR:-/tmp}/...` from your agent.
+
+## Label-based scoping
+
+Every async job an agent spawns inside a session is stamped with
+the `io.openotters.session-id` label. This is what makes "jobs in
+this session" a cheap query across all three surfaces:
+
+- TUI: `/jobs` shows jobs in the current chat session by default.
+- Dashboard: `/jobs?session=<id>` filters the page to one
+  session's work.
+- CLI: `otters jobs ls --session <id>` filters across all agents.
+
+The label is read-only — the agent can't forge it. The runtime
+stamps it at `job_submit` time from the session context.
+
+## Sharing across surfaces
+
+The three surfaces share the same underlying session store, so you
+can start in one and finish in another:
+
+- Start a chat in `otters chat my-agent`. Stop typing. Open the
+  dashboard at `/agents/my-agent/sessions/<id>`, the same
+  conversation is there.
+- Or the reverse — start in the dashboard, then `otters chat
+  my-agent --session <id>` resumes the same conversation in the
+  TUI.
+
+The daemon serialises writes on the session id so concurrent
+writes from two surfaces don't corrupt history. You won't normally
+have two surfaces appending to the same session at once, but the
+locking is there if it happens.
+
+## Lifecycle
+
+- **Created** on the first message in a new conversation. The TUI's
+  `/session new` and the dashboard's New session button mint a new
+  id; otherwise the most recent session for the agent is resumed.
+- **Persistent** across daemon restarts. Sessions live in
+  `daemon.db` (SQLite); they outlive the runtime process.
+- **Deletable** via `otters session rm <id>` and from the dashboard.
+  Removing a session removes its messages, its tool-call records,
+  and the label-scope index. Async jobs that were tagged with the
+  session id stay (jobs live in their own table) but lose the
+  back-link.
+
+## See also
+
+- **[Surfaces](/docs/surfaces)** — the TUI, dashboard, and
+  programmatic API that talk to sessions.
+- **[Async jobs](/docs/jobs)** — the label-scoping story from
+  the job side.
+- **[Workspaces](/docs/workspaces)** — per-agent, not per-session;
+  what survives across conversations.

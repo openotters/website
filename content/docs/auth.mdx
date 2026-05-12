@@ -1,0 +1,136 @@
+---
+title: Authentication
+description: The daemon's JWT-based auth model — operator and agent tokens, scope enforcement, revocation.
+---
+
+Every request to `ottersd` carries a Bearer token. The daemon wraps both
+its unix-socket and TCP listeners in the same JWT interceptor — there
+is no "trusted because it's local" path. The CLI, the dashboard, and
+the agent runtime all authenticate the same way.
+
+For the longer story (why it ended up this shape, what it sets up
+next), see the [agent-scoped JWTs blog post](/blog/agent-scoped-jwts).
+
+## Two issuers
+
+The daemon mints two kinds of tokens.
+
+### Operator tokens
+
+Issued at first daemon start and persisted in
+`~/.otters/credentials.json`. The CLI reads them directly; the
+dashboard reads them through a same-origin cookie.
+
+- **Issuer:** `ottersd`
+- **TTL:** 1 year
+- **Scope:** admin — every endpoint, every agent.
+
+Rotate by deleting `credentials.json` and restarting the daemon —
+a new token is minted automatically. The previous jti is added to
+the revocation set so live clients fail their next call cleanly.
+
+### Agent tokens
+
+Minted one per agent at `CreateAgent` time and injected into the
+agent's spawn environment as `OTTERS_AGENT_TOKEN`. The runtime
+forwards it on every callback to the daemon.
+
+- **Issuer:** `ottersd:agent`
+- **TTL:** 10 years (revocation, not expiry, is the lever — see below).
+- **Scope:** one agent — pinned to the `AgentRef` claim baked into the token.
+
+The token is created with the agent and revoked when the agent is
+removed. Operators don't see or handle agent tokens directly.
+
+## Scope enforcement
+
+Agent tokens are pinned to their own agent server-side. The handler
+ignores any `agent_ref` field in the wire request and substitutes the
+one from the token's claim:
+
+```go
+// internal/asyncjobs_handlers.go
+func boundAgentRef(ctx context.Context, fromRequest string) (string, bool) {
+    if c := auth.ClaimsFromContext(ctx); c != nil && c.AgentRef != "" {
+        return c.AgentRef, true
+    }
+    if fromRequest != "" {
+        return fromRequest, true
+    }
+    return "", false
+}
+```
+
+- Agent A's token has `AgentRef = A`. Anything A sends comes out the
+  other side as A, even if the request body says `agent_ref: B`.
+- Operator tokens have no `AgentRef` claim, so they pass through the
+  wire field unchanged. Admin can act on any agent.
+
+This is the answer to "what if the model is prompt-injected into
+calling `submit_job(agent_ref=B)`": the bytes still come from A's
+token, the daemon rewrites accordingly, the call runs as A.
+
+## Algorithm pinning
+
+The JWT library will verify a token using whatever algorithm the
+token's own header claims. To prevent the alg-confusion class of bug
+(a token with `"alg": "none"` parsed as valid by a naive verifier),
+`Validate` explicitly pins HS256:
+
+```go
+// internal/auth/jwt.go
+parsed, err := jwt.ParseWithClaims(raw, &Claims{},
+    func(t *jwt.Token) (any, error) {
+        if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, fmt.Errorf("unexpected alg %v", t.Header["alg"])
+        }
+        return key, nil
+    },
+    jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+)
+```
+
+Anything else fails before claims are decoded.
+
+## Revocation
+
+Every token carries a `jti` (a UUID baked into the JWT ID claim).
+The daemon persists the jti alongside the agent row (or in the
+operator-credentials file). Revocation is per-jti, not per-expiry:
+
+- `otters agent rm <name>` adds the agent token's jti to the
+  revocation set. Future calls with that token fail
+  `Unauthenticated`, even though `exp` is still years out.
+- Rotating the operator token adds the previous jti to the same set.
+- Forged tokens fail at the signature check, long before revocation
+  is checked.
+
+This is why agent tokens are issued with a 10-year TTL — process
+lifetime, not token expiry, is the real bound on damage, and
+revocation handles the actual security event ("this agent is being
+removed").
+
+## Per-listener wrapping
+
+The interceptor lives on both listeners:
+
+- **Unix socket** (`socket-path:` in the daemon YAML). Used by the
+  CLI and by the agent's daemon callback on native Linux Docker.
+  File permissions are the outer boundary; the JWT enforces caller
+  identity inside.
+- **TCP** (`http-addr:`). Used by the dashboard and by the agent's
+  daemon callback on macOS / Colima Docker (where virtiofs blocks
+  unix-socket bind-mounts). The JWT is the only boundary.
+
+Same code path on both, same failure mode, same `401` response
+shape. The decision falls out of the docker work: once TCP exists
+for Mac and the web UI, the socket can't be the only authenticated
+surface.
+
+## See also
+
+- **[Why each agent gets its own JWT](/blog/agent-scoped-jwts)** —
+  the narrative version, including what this sets up for
+  agent-to-agent permissions later.
+- **[Executors](/docs/executors)** — where the daemon-callback
+  channel lives per backend.

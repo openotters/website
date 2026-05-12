@@ -1,0 +1,87 @@
+---
+title: Tools (BINs)
+description: How tools are packaged, mounted, and surfaced to the model.
+---
+
+In OpenOtters, a tool is an OCI image. The Agentfile declares one with
+[`BIN`](/docs/agentfile#bin); the daemon image-mounts it read-only into
+the agent's environment at run time and registers it with the LLM. The
+agent invokes it through the model's tool-calling interface like any
+other function.
+
+The wire-up means a tool is content-addressed, the agent's view of it is
+exactly the bytes the registry served, and the daemon can swap backends
+(system vs docker) without you touching the Agentfile.
+
+## Declaring a tool
+
+```dockerfile
+BIN <name> <image-ref> "<one-line description>"
+```
+
+- `<name>` — what the model calls it. Becomes a tool name in the prompt
+  surface (`ping`, `gh`, `curl`, …).
+- `<image-ref>` — the OCI image carrying the binary. Pull-pinned with a
+  tag or digest.
+- `<description>` — shown to the model when it picks tools. Write it like
+  a function docstring: what it does, what it expects, what it returns.
+
+A longer USAGE block can follow as a heredoc when the docstring isn't
+enough:
+
+```dockerfile
+BIN curl ghcr.io/openotters/tools/curl:latest "HTTP client" <<EOF
+Pass curl(1) flags as args. Common shape:
+  -X POST                   method override
+  -H "name: value"          header (repeatable)
+  -d "<json>"               request body
+URL is the last positional arg. Wrap in sh -c when chaining with jq.
+EOF
+```
+
+## USAGE.md baked into the image
+
+If a BIN image carries a `USAGE.md` blob (baked at build time by
+`otters bin build -u …`), the runtime appends it under a `## Usage`
+section in the tool's model-facing description.
+
+The `vnd.openotters.bin.usage` manifest annotation drives this. Tools
+you build with a USAGE.md don't need their docs re-stated in every
+Agentfile that consumes them — the model picks it up automatically.
+
+## The canonical tool set
+
+`ghcr.io/openotters/tools/*` carries a curated set, multi-arch, with
+USAGE.md baked in:
+
+| Family       | Tools                                              |
+| ------------ | -------------------------------------------------- |
+| HTTP / JSON  | `curl`, `wget`, `jq`, `yq`                         |
+| Shell        | `sh`, `cat`, `ls`, `find`, `fd`, `rg`              |
+| Cloud-native | `kubectl`, `helm`, `crane`                         |
+| Forge        | `gh`                                               |
+| Misc         | `pandoc`, `yaegi`, `ping`                          |
+
+Source and image build configs live in
+[github.com/openotters/bintool](https://github.com/openotters/bintool).
+
+## CLI
+
+The `bin` subcommand manages BIN images in the local store:
+
+```sh
+otters bin ls                       # list local BIN images
+otters bin pull <ref>               # fetch from a remote registry
+otters bin push <ref>               # publish to a remote registry
+otters bin rm <ref>                 # remove from the local store
+otters bin build … -u USAGE.md      # package a binary set into a BIN image
+```
+
+`build` is rarely run outside the `bintool` workflow. See the
+[CLI reference](/docs/cli#bin-commands) for full flags.
+
+## See also
+
+- **[Agentfile `BIN` directive](/docs/agentfile#bin)** — the grammar.
+- **[Async jobs](/docs/jobs)** — agents can launch BINs in the
+  background without blocking the chat turn.

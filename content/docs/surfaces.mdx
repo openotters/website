@@ -1,0 +1,65 @@
+---
+title: Surfaces
+description: The three ways to talk to an agent — TUI, dashboard, and the daemon's RPC API.
+---
+
+The same daemon serves three surfaces, backed by the same agents and
+sessions. You can start a conversation in one and finish it in another;
+async jobs spawned in either show up in both.
+
+## TUI — `otters chat`
+
+Terminal-first. Full streaming, keyboard-driven, with slash commands:
+
+- `/quit`, `/clear`, `/help`, `/session`
+- `/jobs [status]` — async jobs in this chat session
+- `/job <id>` — full state + tail of stdout/stderr
+- `/cancel <id>` — cancel a running job
+
+A bottom-bar strip shows running jobs scoped to the session (updated
+every 2 s). In-flight tool calls grow a live log preview when the
+model is mid-`job_watch` / `job_wait` / `job_status` so you can see
+what the model is seeing.
+
+`otters prompt <name> "..."` is the one-shot variant for scripts and
+pipelines — same agent, streams the reply to stdout, exits.
+
+## Dashboard — browser UI
+
+The daemon ships a browser dashboard on the HTTP port. `otters info`
+prints the URL (default `http://127.0.0.1:5500`). The dashboard surfaces:
+
+- **Image catalog** — every agent image in the local store, with a
+  run-from-image dialog that lets you override `MODEL` and every `ENV`
+  without an Agentfile edit. Per-version Run button on the image-detail
+  page does the same per tag.
+- **Async jobs** — `/jobs/<id>` streams live stdout / stderr. The
+  chat view inlines a log preview under each running async tool call.
+- **Chat** — same conversation model as the TUI. Sessions are shared.
+
+Agents that need configuration at start-up (auth tokens, base URLs)
+are easiest to launch from the dashboard: pick the image card, hit
+Run, fill the `ENV` overrides in the dialog.
+
+## Programmatic — Connect/gRPC API
+
+Each surface above is a thin client over the daemon's Connect/gRPC API.
+For embedding agents in another Go program, two entry points:
+
+- **`pkg/agent`** — the runtime SDK. Wraps the daemon RPCs in a
+  typed Go API. Stream tokens, observe tool calls, inject context.
+- **Direct Connect/gRPC** — when you're not in Go, or when the SDK's
+  shape doesn't fit. Schema lives in
+  [openotters/openotters/api](https://github.com/openotters/openotters/tree/main/api).
+
+Per-agent authentication is a JWT minted by the daemon at agent-create
+time. See [agent-scoped JWTs](/blog/agent-scoped-jwts) for the auth
+model.
+
+## Sessions are shared
+
+Every conversation has a stable session id. `otters chat` mints
+`cli:chat:<uuid>`; the dashboard's New session button mints
+`gui:chat:<uuid>`. Both end up labelled the same way on every async
+job they spawn, so `otters jobs ls` filters cleanly across both
+surfaces.

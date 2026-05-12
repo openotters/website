@@ -1,0 +1,127 @@
+---
+title: Workspaces
+description: The per-agent FHS root, the model's CWD, and the context files that tell the agent what it can do.
+---
+
+Every agent gets its own workspace — a directory it can read and write,
+plus a set of auto-generated context files the runtime injects into
+the model's system prompt at start-up. The context files are how the
+model learns about its tools, its environment, and what it's allowed
+to do, without you re-stating any of it in the Agentfile.
+
+## On-disk layout
+
+Under the [system executor](/docs/executors/system), the workspace lives
+at `~/.otters/agents/<agent-uuid>/` on the host. Under the
+[docker executor](/docs/executors/docker), the agent sees the same FHS
+shape inside its container — host writes show up at `/workspace/`,
+the FHS tree mounts at `/agent/`.
+
+```
+<agent-root>/
+├── workspace/       # agent CWD — the model's writable scratch dir
+├── home/            # HOME — agent dotfiles land here, never on host's $HOME
+├── tmp/             # TMPDIR — scratch, wiped on restart
+├── etc/             # static data baked in by ADD directives
+├── bin/             # materialised BIN binaries (system executor only)
+└── agent.yaml       # resolved Agentfile + per-run overrides
+```
+
+The model is launched with CWD = `workspace/`. Any file the agent
+creates lands there. The other directories exist so HOME, TMPDIR, and
+PATH resolve to agent-local paths instead of the host's, but the model
+doesn't have to know about them — its mental model is "I write to my
+workspace".
+
+## Context files
+
+At start-up the runtime auto-generates a small set of Markdown files
+in the workspace root and pulls them into the agent's system prompt.
+The model reads them like any other context.
+
+### `AGENT.md`
+
+The agent's identity card. Describes:
+
+- **Declared bins** — every BIN the agent can call, by name, with the
+  one-line description from the Agentfile.
+- **Environment** — every `ENV` key the agent was started with, with
+  the description and the operator-supplied value (redacted for
+  obvious secret-shaped keys).
+- **Capabilities** — a positive section listing what the runtime
+  *can* do for the agent (network, persistent memory, async jobs,
+  persistent workspace). Stops the model from hallucinating that it
+  can't do things it can.
+- **Binaries allowlist** — a strict directive that the agent can only
+  call the listed BINs. Stops the model from hallucinating tools it
+  doesn't have.
+
+Generated fresh on every start, so an `-e` override or a `--model`
+swap shows up immediately.
+
+### `WORKSPACE.md`
+
+The FHS-style layout of the workspace tree, with absolute paths the
+model uses verbatim in tool calls. The model copies paths out of this
+file when constructing `sh -c "cat /workspace/..."` style invocations
+— no guessing, no hallucinated paths.
+
+### `MOUNTS.md`
+
+Present only when the agent was started with `otters run -v` mounts.
+Lists every host bind-mount the operator declared, with:
+
+- The target path inside the workspace.
+- The optional description from the `-v` declaration.
+- Whether the mount is read-only or read-write.
+
+Without this file the model has no way to learn about ad-hoc operator
+mounts — they're not in the Agentfile, they don't show up in env vars,
+the path just exists. `MOUNTS.md` makes them explicit.
+
+### One file per `CONTEXT` heredoc
+
+Every `CONTEXT NAME <<EOF … EOF` block in the Agentfile becomes its
+own file (`SOUL.md`, `SCENARIOS.md`, `IDENTITY.md`, …). The optional
+description on the directive renders as a sub-header above the body.
+
+The convention is to give each section a short, capitalised name so
+the model can refer to it ("per SOUL.md, you …"). The runtime feeds
+all CONTEXT files in declaration order, so order in the Agentfile
+controls the reading order in the prompt.
+
+## Lifecycle
+
+- **Created** on the first `otters run` for a given agent name. The
+  directory is materialised from the agent image.
+- **Persistent** across `otters stop` / `otters start`. The model's
+  workspace files survive restarts.
+- **Wiped** on `otters rm`. Removing an agent removes its workspace.
+
+The runtime never garbage-collects workspace contents on its own —
+files the agent wrote stay until the operator removes the agent or
+empties the dir manually.
+
+## Operator-supplied bind-mounts
+
+`otters run -v HOST:TARGET[:DESC][:ro|rw]` exposes a host path as a
+workspace entry. Use this to give the agent access to project sources,
+data files, or a credentials file the Agentfile shouldn't carry.
+
+The mount is recorded in `MOUNTS.md` so the model sees it. `:ro`
+makes the mount read-only at the executor boundary — the model can
+read but not write, regardless of what its tools try.
+
+```sh
+otters run my-coder -v "$PWD:/workspace/src:Project source"
+otters run my-data -v "/data/customers.csv:/workspace/data/customers.csv:ro"
+```
+
+## See also
+
+- **[Agentfile `CONTEXT`](/docs/agentfile#context)** — declaring
+  context heredocs.
+- **[Agentfile `ENV`](/docs/agentfile#env)** — environment vars
+  surfaced in `AGENT.md`.
+- **[Executors](/docs/executors)** — where workspace bytes actually
+  live (host filesystem vs container bind-mount).
