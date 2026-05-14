@@ -1,0 +1,136 @@
+---
+title: Roadmap
+description: What we're considering next — design notes captured before any code lands.
+---
+
+This page captures intent, not commitments. Items here have been
+discussed and have a rough shape, but haven't been scheduled, scoped,
+or sequenced yet. Each entry summarises the problem, the leading
+approach, and what's still open.
+
+If you care about one of these and want to push it forward, open an
+issue on [openotters/openotters](https://github.com/openotters/openotters/issues).
+
+## Edit / rebase existing agents
+
+**Problem.** Once an agent is created you can't change its
+configuration (envs, model, runtime override, image ref) without
+deleting and recreating it — which loses chat history, async-job
+records, and any files the agent stashed in its workspace.
+
+**Leading approach.** Two flows with different blast radius:
+
+- **Edit** — operator-controlled overrides (envs, model, runtime).
+  Stop the agent, mutate the row in place keeping the UUID and
+  on-disk root, restart. Data preserved automatically because both
+  the daemon's `async_jobs` table and the runtime's `memory.db` are
+  keyed by agent UUID.
+- **Rebase** — swap the image reference. Workspace is recreated
+  from the new image, so the FHS layout changes. Chat history
+  survives if `memory.db` is relocated out of the workspace first
+  (see next item), otherwise it needs an explicit copy-and-restore
+  step. Past sessions may reference tool names that no longer exist
+  in the new agent surface — surface a warning, let the user
+  proceed.
+
+**Open.** CLI shape (`otters edit <name> --env KEY=VAL` vs an
+editor-driven YAML edit). UI shape on the agent detail page.
+
+## Relocate `memory.db` out of the agent workspace
+
+**Problem.** Today each runtime stores chat sessions in
+`<agent-root>/var/lib/memory.db`, mixing daemon-owned bookkeeping
+with the FHS workspace. This makes Rebase awkward (recreating the
+workspace risks the chat data) and couples backups to a directory
+structure that should be pure agent state.
+
+**Leading approach.** Move to a daemon-owned path keyed by UUID, e.g.
+`~/.otters/agents/<uuid>/memory.db`. The runtime keeps direct SQLite
+access via a `--memory-db-path` flag the daemon supplies on spawn.
+First start after the upgrade detects a legacy in-workspace file,
+copies it to the new path, deletes the original. Fallback drops
+after one release.
+
+**Why not gRPC.** Routing every chat-message write through the
+daemon as RPCs is possible but pays a daemon-restart-mid-turn cost,
+adds ~10 new RPCs, and breaks the "runtime works standalone"
+property. The relocate option captures the main wins (Rebase safe,
+backup simple) for a fraction of the work. Revisit if a cross-agent
+query / dashboard requirement appears.
+
+## Daemon-less CLI subset (build / push / pull / inspect)
+
+**Problem.** `otters bin build`, `otters image build`, and their
+push/pull/inspect siblings all require a running `ottersd` even
+though the underlying logic (multi-arch OCI build + ORAS push) is
+daemon-agnostic. In a CI runner this forces spawning a daemon in
+the background just to publish an image.
+
+**Leading approaches (not yet decided).**
+
+- **`OTTERS_NODAEMON=1` env on `otters`.** Curates the visible
+  command surface to the daemon-less subset and routes those
+  commands through a direct OCI path. Lightest ship — one binary,
+  reversible. Downside: env-driven help is unusual and daemon-only
+  commands still error (just with a different message) if typed
+  from memory in offline mode.
+- **Grow `ottersd` to carry the build commands.** `ottersd image
+  build` / `ottersd bin build` / etc. operate directly on remote
+  registries without needing a serve session. Mental model:
+  `otters` = operator (talks to running daemon), `ottersd` = system
+  (runs daemon + offline tooling). Cleanest UX, slightly more
+  refactor, widens `ottersd`'s scope beyond "the daemon."
+- **Daemon-spawning composite action.** Keep the CLI surface as-is
+  and have `setup-otters` start `ottersd` in the background as part
+  of the action. No CLI change at all; complexity hidden in the
+  action's YAML. Works but doesn't help anyone scripting outside
+  GitHub Actions.
+
+**Open.** Which of the three to ship. Probably (1) first as the
+cheapest reversible step, then promote to (2) if users still
+mistype.
+
+## `openotters/actions` repo
+
+**Problem.** Using openotters in a GitHub Actions pipeline today
+requires hand-rolling: install the brew formula on the runner,
+spawn `ottersd`, wait for the socket, then call `otters bin build`
+/ `otters image push`. Every consumer reimplements this.
+
+**Leading approach.** A repo with composite actions:
+
+- `setup-otters@v1` — install the CLI, optionally start the
+  daemon (only needed until the daemon-less CLI subset above
+  lands).
+- `build-bin@v1` — wraps `otters bin build` (or the daemon-less
+  equivalent) for multi-arch BIN/runtime images.
+- `build-agent@v1` — wraps `otters image build` for agent images.
+- Auth folded in as inputs on the build actions (or a `login@v1`
+  step that calls the docker credential helper).
+
+**Open.** Depends on which CLI shape the previous item lands on.
+Worth starting once the daemon-less story is settled — otherwise
+`setup-otters` has to carry the daemon-spawning workaround as v1
+and we re-cut v2 once the CLI changes.
+
+## Auto-publish runtime image on tag push
+
+**Problem.** The runtime's OCI image at
+`ghcr.io/openotters/runtime` is built and pushed via a manual
+`task image:publish` step, not on tag push. This already bit us
+once: alpha.14 was git-tagged for over a day before the image was
+published, so daemons pulling `:latest` kept getting the alpha.11
+bytes and the "memory.db wipe on restart" fix didn't actually
+reach anyone.
+
+**Leading approach.** A GitHub Action on the runtime repo that
+fires on `v*` tag push, runs `task image:publish TAGS="$TAG …"`
+with the right floating-tag cadence (`vX.Y.Z`, `vX.Y`, `vX`,
+`latest`). Mirror the same shape on the agent images repo so
+agents stay in lockstep.
+
+**Open.** The publish currently needs `otters bin build`, which
+needs a daemon, which means the CI runner needs to spawn one. This
+is solved trivially once the daemon-less CLI lands. Until then,
+either start `ottersd` in the workflow or use `setup-otters` once
+the actions repo exists.
