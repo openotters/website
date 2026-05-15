@@ -163,6 +163,15 @@ Defaults apply when a key is absent:
 | `memory-strategy`      | `summarize` | Compactor mode — `summarize` or `sliding`.             |
 | `memory-max-messages`  | `20`        | Compact once history crosses this length.              |
 | `memory-max-tokens`    | `0` (off)   | Compact once estimated token count crosses this.       |
+| `temperature`          | provider    | Sampling temperature (float). `0` = deterministic.     |
+| `top-p`                | provider    | Nucleus-sampling cutoff (float, `0`–`1`).              |
+| `top-k`                | provider    | Top-K sampling cutoff (int).                           |
+| `presence-penalty`     | provider    | Penalty for repeating tokens already present (float).  |
+| `frequency-penalty`    | provider    | Penalty proportional to a token's prior frequency.     |
+
+The five sampling knobs are forwarded to the provider only when the
+key is present. Omit a key and the provider's own default applies —
+`temperature: 0` means deterministic, not "use the default".
 
 These are **not** CLI flags. The Agentfile (or a daemon-side override
 that ultimately rewrites the same `configs:` map) is the only input

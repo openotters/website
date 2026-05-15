@@ -61,7 +61,10 @@ runtime: { ref: ghcr.io/openotters/runtime:latest, digest: sha256:1ab55f94… }
 
 # Runtime tunables (the CONFIG directive's flat map, kebab-case
 # keys mirroring the Agentfile). Consumed by the runtime —
-# max-tokens / max-iterations / memory-strategy / memory-max-*.
+# max-tokens / max-iterations / memory-* / sampling knobs
+# (temperature / top-p / top-k / presence-penalty /
+# frequency-penalty). Omitted sampling keys defer to the provider's
+# own defaults; see Runtime → Tunables for the full reference.
 configs:
   max-tokens: 2048
   max-iterations: 10
