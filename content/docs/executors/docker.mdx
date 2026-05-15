@@ -61,9 +61,17 @@ On `otters run <image>` the daemon does, roughly:
 2. Creates a container with:
    - `RUNTIME` image attached at `/opt/runtime` via
      `--mount type=image,readonly`.
-   - Each `BIN` image attached at `/opt/bins/<name>/` the same way.
-   - The agent's FHS-style root (`/agent/`) and workspace
-     (`/workspace/`) bind-mounted from the host.
+   - Each `BIN` image attached at `/opt/bin-images/<name>/` the
+     same way (hidden from the model — `/opt/bins/<name>` is the
+     symlink the runtime puts on `PATH`).
+   - The agent's FHS-style root bind-mounted **per top-level
+     subtree** onto the matching standard Linux path: `/etc/context`,
+     `/etc/data`, `/etc/Agentfile`, `/etc/agent.yaml`, `/home`,
+     `/tmp`, `/var/lib`, `/workspace`, `/opt/bins`. No `/agent`
+     prefix — the agent's filesystem **is** the container's root
+     FHS. Distroless's own `/etc/passwd`, `/etc/group`, and
+     `/etc/ssl/certs` stay intact because we mount per-entry under
+     `/etc`, not the whole directory.
    - The runtime binary at `/opt/runtime/runtime` as the entrypoint.
 3. Wires the daemon-callback channel:
    - On native Linux, the host's daemon socket is bind-mounted at
@@ -120,9 +128,14 @@ Identical to the [system executor](/docs/executors/system#spawn-environment)
 above the bind-mount boundary — same reserved keys, same `ENV`
 opt-in. Container-internal paths differ:
 
-- `PATH` includes `/opt/bins/<name>` per BIN.
-- `HOME`, `XDG_*`, `TMPDIR` live under `/agent/` (the bind-mounted FHS root).
-- The agent's CWD is `/workspace/` (the writable scratch dir).
+- `PATH` is the single directory `/opt/bins` — every BIN tool
+  resolves through a flat symlink there (`/opt/bins/<name>` IS the
+  executable, no nested `<name>/<name>` elbow).
+- `HOME=/home`, `TMPDIR=/tmp`, `XDG_*=/home/...` — the agent's FHS
+  IS the container's root filesystem, so the standard paths just
+  work.
+- `OTTERS_AGENT_ROOT=/`.
+- The agent's CWD is `/workspace` (the writable scratch dir).
 
 ## Sandbox properties
 

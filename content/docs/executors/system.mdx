@@ -45,8 +45,13 @@ after a grace period.
 │       ├── usr/bin/<tool>           # materialised BIN binaries
 │       ├── home/                    # agent's HOME
 │       ├── tmp/                     # agent's TMPDIR
-│       ├── etc/                     # agent.yaml + per-agent config
-│       └── workspace/               # agent CWD; auto-generated context files
+│       ├── var/lib/                 # persistent state (memory.db, …)
+│       ├── etc/
+│       │   ├── Agentfile            # verbatim DSL source (image layer)
+│       │   ├── agent.yaml           # slim runtime config (see Workspaces)
+│       │   ├── context/             # auto-generated context files loaded into system prompt
+│       │   └── data/                # static files baked in by ADD directives
+│       └── workspace/               # agent CWD; the model's writable scratch dir
 ├── logs/<agent-uuid>.log            # per-agent stdout/stderr
 ├── providers.yaml                   # LLM provider credentials
 ├── daemon.db                        # SQLite state

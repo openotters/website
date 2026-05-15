@@ -157,10 +157,27 @@ CONFIG max-tokens=2048 "Headroom for richer state dumps + filtered views"
 CONFIG max-iterations=10 "Allow fetch -> filter -> service-call chains"
 ```
 
-Common keys: `max-tokens`, `max-iterations`, `temperature`, plus any
-runtime-specific knob the runtime image documents. Unknown keys are
-accepted and surfaced via the runtime's config struct so a custom runtime
-can read them.
+The spec only defines the directive's shape — a key/value pair with
+an optional description. **The key vocabulary itself is not fixed by
+the spec**; each runtime image declares which keys it consumes and
+how they're interpreted. The daemon stamps every `CONFIG` entry
+verbatim into `etc/agent.yaml`'s `configs:` map (kebab-case, no
+rename); the runtime reads from there.
+
+That makes `CONFIG` a runtime-extension point: a custom runtime image
+that, say, exposes a different sampler or memory backend can document
+its own keys (e.g. `temperature`, `cache-store`, `safety-mode`) and
+the spec doesn't need to change.
+
+For the stock `ghcr.io/openotters/runtime`, the supported keys live
+in the [Runtime → Tunables](/docs/runtime#runtime-tunables) section
+of the runtime docs. Always consult the runtime image's docs (not
+the Agentspec) for the authoritative list. Unknown keys are accepted
+and persisted regardless, so an agent built against a future runtime
+version can declare keys today's runtime doesn't yet read.
+
+These are **not** CLI flags — the Agentfile (or a daemon-side
+override) is the only input path.
 
 ### `ADD`
 

@@ -134,14 +134,45 @@ reach, even when the agent spawns subprocesses via `sh`. The Agentfile
 can opt in extra OS env vars via the [`ENV`](/docs/agentfile#env)
 instruction; reserved keys are rejected at build time:
 
-- `PATH` — rooted at the agent's `bin/` (system) or
-  `/opt/bins/<name>` (docker).
+- `PATH` — `<agent-root>/usr/bin` (system) or `/opt/bins` (docker,
+  flat dir of symlinks → `/opt/bin-images/<name>/<name>`).
 - `HOME`, `XDG_*`, `TMPDIR` — rooted under the agent's directory.
 - `LANG`, `OTTERS_AGENT_ROOT` — set by the runtime.
 - `*_API_KEY`, `*_API_BASE` — travel through the provider-credential
   channel; declare a [provider](/docs/cli) instead.
 
 The lock-down rules apply to both [executor backends](/docs/executors).
+
+## Runtime tunables
+
+This is the **stock `ghcr.io/openotters/runtime`** contract. A custom
+runtime image is free to consume an entirely different set of keys —
+the [`CONFIG`](/docs/agentfile#config) directive is a runtime-extension
+point, not a fixed spec vocabulary. Always consult the runtime image
+you're targeting for its authoritative list.
+
+The stock runtime reads these keys from the `configs:` map in
+`etc/agent.yaml` (which the daemon stamps from the Agentfile's
+`CONFIG` directives, kebab-case keys mirroring the source 1:1).
+Defaults apply when a key is absent:
+
+| Key                    | Default     | Effect                                                 |
+| ---------------------- | ----------- | ------------------------------------------------------ |
+| `max-tokens`           | `4096`      | Max output tokens per generation.                      |
+| `max-iterations`       | `20`        | Max tool-call iterations per turn.                     |
+| `memory-strategy`      | `summarize` | Compactor mode — `summarize` or `sliding`.             |
+| `memory-max-messages`  | `20`        | Compact once history crosses this length.              |
+| `memory-max-tokens`    | `0` (off)   | Compact once estimated token count crosses this.       |
+
+These are **not** CLI flags. The Agentfile (or a daemon-side override
+that ultimately rewrites the same `configs:` map) is the only input
+path. Unknown keys are accepted and persisted to `agent.yaml`
+regardless — a custom runtime can read them via the same mechanism —
+but the stock runtime logs unknown keys at debug.
+
+See [`CONFIG`](/docs/agentfile#config) for the writing side and
+[Workspaces → `agent.yaml`](/docs/workspaces#agent.yaml) for the
+on-disk shape.
 
 ## See also
 

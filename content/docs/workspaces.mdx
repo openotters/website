@@ -12,26 +12,95 @@ to do, without you re-stating any of it in the Agentfile.
 ## On-disk layout
 
 Under the [system executor](/docs/executors/system), the workspace lives
-at `~/.otters/agents/<agent-uuid>/` on the host. Under the
-[docker executor](/docs/executors/docker), the agent sees the same FHS
-shape inside its container — host writes show up at `/workspace/`,
-the FHS tree mounts at `/agent/`.
+at `~/.otters/agents/<agent-uuid>/` on the host — the runtime runs as
+a plain subprocess and sees those host paths directly. Under the
+[docker executor](/docs/executors/docker), each top-level subtree of
+that host directory bind-mounts onto the matching standard Linux path
+inside the container, so the agent sees a normal FHS rooted at `/` —
+no `/agent` prefix.
 
 ```
-<agent-root>/
-├── workspace/       # agent CWD — the model's writable scratch dir
-├── home/            # HOME — agent dotfiles land here, never on host's $HOME
-├── tmp/             # TMPDIR — scratch, wiped on restart
-├── etc/             # static data baked in by ADD directives
-├── bin/             # materialised BIN binaries (system executor only)
-└── agent.yaml       # resolved Agentfile + per-run overrides
+<agent-root>/                    →   in-container (docker)
+├── workspace/                   →   /workspace        # CWD; the model's writable scratch
+├── home/                        →   /home             # HOME — agent dotfiles, never host's
+├── tmp/                         →   /tmp              # TMPDIR — wiped on restart
+├── var/lib/                     →   /var/lib          # persistent state (memory.db, etc.)
+├── opt/bins/                    →   /opt/bins         # flat dir of symlinks → /opt/bin-images/<name>/<name>
+└── etc/
+    ├── context/                 →   /etc/context      # auto-generated context files (see below)
+    ├── data/                    →   /etc/data         # static files from ADD directives
+    ├── Agentfile                →   /etc/Agentfile    # verbatim DSL source — what the operator wrote
+    └── agent.yaml               →   /etc/agent.yaml   # slim runtime config (see "agent.yaml" below)
 ```
 
-The model is launched with CWD = `workspace/`. Any file the agent
+BIN tool binaries on docker come from per-tool OCI image mounts at
+`/opt/bin-images/<name>/<name>` (hidden from the model); the symlinks
+in `/opt/bins/` are what the runtime puts on `PATH`. On system, BIN
+binaries are materialised as plain files under `usr/bin/<name>`.
+
+The model is launched with CWD = `/workspace`. Any file the agent
 creates lands there. The other directories exist so HOME, TMPDIR, and
 PATH resolve to agent-local paths instead of the host's, but the model
 doesn't have to know about them — its mental model is "I write to my
 workspace".
+
+## `agent.yaml`
+
+`etc/agent.yaml` is the runtime's slim config file. The daemon writes
+it at materialise time; the runtime reads it at start-up.
+
+```yaml
+id: 86106816-…
+name: Homelab
+model: anthropic-local/claude-opus-4-7
+workspace: /workspace
+
+# OCI provenance — what bytes the agent was materialised from.
+image:   { ref: kubectl:latest,                    digest: sha256:3b97b227… }
+runtime: { ref: ghcr.io/openotters/runtime:latest, digest: sha256:1ab55f94… }
+
+# Runtime tunables (the CONFIG directive's flat map, kebab-case
+# keys mirroring the Agentfile). Consumed by the runtime —
+# max-tokens / max-iterations / memory-strategy / memory-max-*.
+configs:
+  max-tokens: 2048
+  max-iterations: 10
+
+# Every env key this agent expects. KEYS ONLY — values live in
+# daemon.db (operator overrides) and the Agentfile (spec defaults),
+# and get merged into the spawn env at start time. No secrets on
+# disk in this file by construction.
+envs:
+  - key: KUBECONFIG
+    description: Kubeconfig path inside the agent.
+
+# Spec-declared mounts. Operator -v host paths live in daemon.db;
+# only the target / description / read-only flag persist here.
+mounts:
+  - target: /kubeconfig.yaml
+    description: Kubeconfig for the cluster the agent should operate on.
+    read_only: true
+
+# Ordered context files. Absolute paths from the agent root.
+# Replaces the older dir-scan of etc/context/ — the file is the
+# authoritative declaration of what loads into the system prompt.
+context:
+  - /etc/context/SOUL.md
+  - /etc/context/SCENARIOS.md
+
+tools:
+  - name: kubectl
+    description: kubectl CLI.
+    binary: /opt/bins/kubectl
+    ref: ghcr.io/openotters/tools/kubectl:latest
+    digest: sha256:efgh…
+    usage: /etc/data/bins/kubectl/USAGE.md
+```
+
+The original Agentfile (verbatim DSL, with comments and formatting
+intact) rides along the image as its own layer and lands beside this
+file at `/etc/Agentfile`. Reading the two together gives you what the
+operator wrote *and* the daemon's resolved view.
 
 ## Context files
 
